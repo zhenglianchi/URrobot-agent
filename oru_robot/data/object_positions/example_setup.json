@@ -1,0 +1,172 @@
+
+{
+  "objects": [
+    {
+      "object_id": "oru_old_001",
+      "object_type": "oru",
+      "position": {
+        "x": 0.5,
+        "y": 0.0,
+        "z": 0.2,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "serial_number": "ORU-2025-001",
+        "status": "to_replace"
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "oru_new_001",
+      "object_type": "oru",
+      "position": {
+        "x": 0.8,
+        "y": 0.3,
+        "z": 0.15,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "serial_number": "ORU-2025-002",
+        "status": "new"
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "storage_rack_001",
+      "object_type": "storage_rack",
+      "position": {
+        "x": 0.8,
+        "y": 0.3,
+        "z": 0.0,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "slots": 4,
+        "rack_name": "ORU收纳架A"
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "rack_slot_1",
+      "object_type": "pick_point",
+      "position": {
+        "x": 0.8,
+        "y": 0.3,
+        "z": 0.15,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "slot_number": 1
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "assembly_station_001",
+      "object_type": "assembly_station",
+      "position": {
+        "x": 0.5,
+        "y": 0.0,
+        "z": 0.0,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "station_name": "装配工位1"
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "tool_rack_001",
+      "object_type": "tool_rack",
+      "position": {
+        "x": 0.3,
+        "y": -0.4,
+        "z": 0.0,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "tools": ["screwdriver", "wrench"]
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "screwdriver_001",
+      "object_type": "screwdriver",
+      "position": {
+        "x": 0.3,
+        "y": -0.4,
+        "z": 0.1,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {
+        "type": "electric",
+        "max_torque": 5.0
+      },
+      "is_available": true
+    },
+    {
+      "object_id": "oru_pick_point_001",
+      "object_type": "pick_point",
+      "position": {
+        "x": 0.5,
+        "y": 0.0,
+        "z": 0.25,
+        "rx": 0.0,
+        "ry": 0.0,
+        "rz": 0.0,
+        "frame_id": "base"
+      },
+      "properties": {},
+      "is_available": true
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "oru_old_001",
+      "target_id": "oru_pick_point_001",
+      "relation_type": "target_for",
+      "metadata": {
+        "action": "pick"
+      }
+    },
+    {
+      "source_id": "storage_rack_001",
+      "target_id": "rack_slot_1",
+      "relation_type": "contains",
+      "metadata": {}
+    },
+    {
+      "source_id": "tool_rack_001",
+      "target_id": "screwdriver_001",
+      "relation_type": "contains",
+      "metadata": {}
+    },
+    {
+      "source_id": "oru_new_001",
+      "target_id": "rack_slot_1",
+      "relation_type": "placed_at",
+      "metadata": {}
+    }
+  ]
+}
+
