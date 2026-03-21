@@ -1,0 +1,164 @@
+import os
+import sys
+import shutil
+from dotenv import load_dotenv
+
+load_dotenv()
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from robot.lead_agent import create_lead_agent
+
+
+def clear_line():
+    """清除当前行，用于覆盖输出"""
+    columns = shutil.get_terminal_size().columns
+    print('\r' + ' ' * columns + '\r', end='', flush=True)
+
+
+def stream_print(text: str, end=''):
+    """流式输出，不自动换行"""
+    print(text, end=end, flush=True)
+
+
+def print_separator(char='=', length=60):
+    print(char * length)
+
+
+def main():
+    print_separator()
+    print("🤖 双臂机器人智能控制系统 - 命令行模式")
+    print_separator()
+
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "object_positions.json")
+
+    # 创建stream_callback来实时输出子agent的思考
+    def stream_callback(event_type: str, content: str):
+        if "[thinking]" in content:
+            if content.startswith("[thinking]"):
+                clear_line()
+                agent_name = event_type.split(']')[0] if ']' in event_type else "主智能体"
+                stream_print(f"\n{agent_name} 思考中: ")
+            return
+        if "[/thinking]" in content:
+            stream_print("\n")
+            return
+        if "[tool_call]" in content:
+            stream_print(f"\n🔧 工具调用: {content.replace('[tool_call]', '').replace('[/tool_call]', '')}\n")
+            return
+        if "[tool_result]" in content:
+            result = content.replace('[tool_result]', '').replace('[/tool_result]', '')
+            stream_print(f"✅ 结果: {result}\n")
+            return
+        if "[error]" in content:
+            error = content.replace('[error]', '').replace('[/error]', '')
+            stream_print(f"\n❌ 错误: {error}\n")
+            return
+        # 普通思考内容，直接输出不换行
+        stream_print(content)
+
+    agent = create_lead_agent(
+        config_path=config_path,
+        stream_callback=stream_callback
+    )
+
+    print(f"\n✓ 已初始化智能体")
+    print(f"  模型: {agent.model}")
+    print(f"  机械臂: {list(agent.manager.arms.keys())}")
+    print(f"  物体: {len(agent.manager.objects)} 个")
+
+    print_separator('-')
+    print("命令说明:")
+    print("  quit / exit / q → 退出程序")
+    print("  state / 状态 → 显示当前工作单元完整状态")
+    print("  team / 队友 → 显示队友状态")
+    print("  reset / 重置 → 重置所有机械臂和任务")
+    print("  help / 帮助 → 显示帮助")
+    print_separator('-')
+
+    while True:
+        try:
+            user_input = input("\n> ").strip()
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ["quit", "exit", "退出", "q"]:
+                print("\n再见!")
+                agent.disconnect()
+                break
+
+            if user_input.lower() in ["state", "状态"]:
+                print_separator('-')
+                print(agent.manager.get_scene_summary())
+                print_separator('-')
+                continue
+
+            if user_input.lower() in ["team", "队友", "list"]:
+                print_separator('-')
+                print(agent.teammate_manager.list_teammates())
+                print_separator('-')
+                continue
+
+            if user_input.lower() in ["reset", "重置"]:
+                agent.reset()
+                print("✓ 智能体重置完成。")
+                continue
+
+            if user_input.lower() in ["help", "帮助"]:
+                print_separator('-')
+                print("命令说明:")
+                print("  quit / exit / q → 退出程序")
+                print("  state / 状态 → 显示当前工作单元完整状态")
+                print("  team / 队友 → 显示队友状态")
+                print("  reset / 重置 → 重置所有机械臂和任务")
+                print("  help / 帮助 → 显示帮助")
+                print_separator('-')
+                continue
+
+            print()
+            full_response = ""
+            for chunk in agent.chat_stream(user_input):
+                if "[thinking]" in chunk:
+                    if chunk.startswith("[thinking]"):
+                        clear_line()
+                        stream_print("主智能体 思考中: ")
+                elif "[/thinking]" in chunk:
+                    stream_print("\n")
+                elif "[tool_call]" in chunk:
+                    content = chunk.replace('[tool_call]', '').replace('[/tool_call]', '')
+                    stream_print(f"\n🔧 工具调用: {content}\n")
+                elif "[tool_result]" in chunk:
+                    content = chunk.replace('[tool_result]', '').replace('[/tool_result]', '')
+                    stream_print(f"✅ 结果: {content}\n")
+                elif "[response]" in chunk:
+                    content = chunk.replace('[response]', '').replace('[/response]', '')
+                    full_response = content
+                elif "[error]" in chunk:
+                    error = chunk.replace('[error]', '').replace('[/error]', '')
+                    stream_print(f"\n❌ 错误: {error}\n")
+                else:
+                    # 流式输出思考内容，不换行
+                    stream_print(chunk)
+
+            if full_response:
+                print_separator('-')
+                print(f"📄 最终响应:\n{full_response}")
+
+            # 任务完成后显示当前状态
+            print_separator('-')
+            print(agent.manager.get_scene_summary())
+            print_separator()
+
+        except KeyboardInterrupt:
+            print("\n\n中断。再见!")
+            agent.disconnect()
+            break
+        except Exception as e:
+            print(f"\n❌ 错误: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()

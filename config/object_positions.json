@@ -1,0 +1,54 @@
+{
+  "robots": {
+    "arm_left": {
+      "name": "Left UR5",
+      "host": "192.168.1.101",
+      "home_position": [0.3, 0.3, 0.4, 0.0, 3.14159, 0.0],
+      "reachable_zones": ["assembly_station", "storage_rack_left", "storage_rack_right"]
+    },
+    "arm_right": {
+      "name": "Right UR5",
+      "host": "192.168.1.102",
+      "home_position": [0.3, -0.3, 0.4, 0.0, 3.14159, 0.0],
+      "reachable_zones": ["assembly_station", "storage_rack_left", "storage_rack_right"]
+    }
+  },
+  "objects": {
+    "assembly_station": {
+      "position": [0.5, 0.0, 0.2, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.15],
+      "type": "station",
+      "status": "ready"
+    },
+    "oru_old": {
+      "position": [0.5, 0.0, 0.25, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.1],
+      "type": "oru",
+      "status": "installed"
+    },
+    "oru_new": {
+      "position": [0.6, 0.25, 0.15, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.1],
+      "type": "oru",
+      "status": "stored"
+    },
+    "storage_rack_left": {
+      "position": [0.6, 0.25, 0.1, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.1],
+      "type": "storage",
+      "status": "available"
+    },
+    "storage_rack_right": {
+      "position": [0.6, -0.25, 0.1, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.1],
+      "type": "storage",
+      "status": "available"
+    },
+    "screwdriver": {
+      "position": [0.6, -0.35, 0.15, 0.0, 3.14159, 0.0],
+      "approach_offset": [0.0, 0.0, 0.1],
+      "type": "tool",
+      "status": "stored"
+    }
+  }
+}

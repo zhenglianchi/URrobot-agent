@@ -1,0 +1,336 @@
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+from enum import Enum
+import threading
+import time
+import json
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.logger_handler import logger
+
+
+class ArmStatus(Enum):
+    IDLE = "idle"
+    MOVING = "moving"
+    WORKING = "working"
+    ERROR = "error"
+
+
+@dataclass
+class ArmState:
+    arm_id: str
+    name: str
+    host: str = ""
+    status: ArmStatus = ArmStatus.IDLE
+    position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    gripper_closed: bool = False
+    object_in_hand: Optional[str] = None
+    current_task: Optional[str] = None
+    reachable_zones: List[str] = field(default_factory=list)
+    home_position: List[float] = field(default_factory=lambda: [0.3, 0.0, 0.4, 0.0, 3.14159, 0.0])
+    use_simulator: bool = True
+    
+    def is_busy(self) -> bool:
+        return self.status not in [ArmStatus.IDLE, ArmStatus.ERROR]
+    
+    def to_dict(self) -> Dict:
+        return {
+            "arm_id": self.arm_id,
+            "name": self.name,
+            "host": self.host,
+            "status": self.status.value,
+            "position": self.position,
+            "gripper_closed": self.gripper_closed,
+            "object_in_hand": self.object_in_hand,
+            "current_task": self.current_task,
+            "reachable_zones": self.reachable_zones,
+            "use_simulator": self.use_simulator,
+        }
+
+
+class RobotArm:
+    def __init__(self, arm_id: str, name: str, home_position: List[float], 
+                 reachable_zones: List[str], host: str = "", use_simulator: bool = True):
+        self.state = ArmState(
+            arm_id=arm_id,
+            name=name,
+            host=host,
+            position=home_position.copy(),
+            home_position=home_position.copy(),
+            reachable_zones=reachable_zones,
+            use_simulator=use_simulator
+        )
+        self._position = home_position.copy()
+        self._gripper_closed = False
+        self._lock = threading.Lock()
+        self._real_robot = None
+        
+        if not use_simulator and host:
+            self._connect_real_robot(host)
+        
+        mode = "simulator" if use_simulator else f"real({host})"
+        logger.info(f"[Arm] {name} initialized ({mode})")
+    
+    def _connect_real_robot(self, host: str):
+        try:
+            import rtde_control
+            import rtde_receive
+            self._rtde_c = rtde_control.RTDEControlInterface(host)
+            self._rtde_r = rtde_receive.RTDEReceiveInterface(host)
+            self._real_robot = True
+            logger.info(f"[Arm] {self.state.name} connected to {host}")
+        except Exception as e:
+            logger.error(f"[Arm] Failed to connect to {host}: {e}")
+            self._real_robot = False
+            self.state.use_simulator = True
+    
+    def get_tcp(self) -> List[float]:
+        with self._lock:
+            if self._real_robot:
+                return list(self._rtde_r.getActualTCPPose())
+            return self._position.copy()
+    
+    def moveL(self, position: List[float], speed: float = 0.05) -> bool:
+        with self._lock:
+            self.state.status = ArmStatus.MOVING
+            
+            if self._real_robot:
+                try:
+                    self._rtde_c.moveL(position, speed, 0.2)
+                    self.state.position = position.copy()
+                    self.state.status = ArmStatus.IDLE
+                    return True
+                except Exception as e:
+                    logger.error(f"[Arm] moveL error: {e}")
+                    self.state.status = ArmStatus.ERROR
+                    return False
+            else:
+                time.sleep(0.3)
+                self._position = position.copy()
+                self.state.position = position.copy()
+                self.state.status = ArmStatus.IDLE
+                return True
+    
+    def move_relative(self, dx: float = 0, dy: float = 0, dz: float = 0) -> bool:
+        with self._lock:
+            self.state.status = ArmStatus.MOVING
+            
+            if self._real_robot:
+                try:
+                    current = list(self._rtde_r.getActualTCPPose())
+                    target = [current[0] + dx, current[1] + dy, current[2] + dz,
+                              current[3], current[4], current[5]]
+                    self._rtde_c.moveL(target, 0.05, 0.2)
+                    self.state.position = target
+                    self.state.status = ArmStatus.IDLE
+                    return True
+                except Exception as e:
+                    logger.error(f"[Arm] move_relative error: {e}")
+                    self.state.status = ArmStatus.ERROR
+                    return False
+            else:
+                time.sleep(0.2)
+                self._position[0] += dx
+                self._position[1] += dy
+                self._position[2] += dz
+                self.state.position = self._position.copy()
+                self.state.status = ArmStatus.IDLE
+                return True
+    
+    def open_gripper(self):
+        with self._lock:
+            if self._real_robot:
+                try:
+                    self._rtde_c.setToolDigitalOut(0, False)
+                except Exception as e:
+                    logger.error(f"[Arm] open_gripper error: {e}")
+            else:
+                time.sleep(0.1)
+            
+            self._gripper_closed = False
+            self.state.gripper_closed = False
+            self.state.object_in_hand = None
+            logger.info(f"[Arm] {self.state.name} gripper opened")
+    
+    def close_gripper(self):
+        with self._lock:
+            if self._real_robot:
+                try:
+                    self._rtde_c.setToolDigitalOut(0, True)
+                except Exception as e:
+                    logger.error(f"[Arm] close_gripper error: {e}")
+            else:
+                time.sleep(0.1)
+            
+            self._gripper_closed = True
+            self.state.gripper_closed = True
+            logger.info(f"[Arm] {self.state.name} gripper closed")
+    
+    def stop(self):
+        with self._lock:
+            if self._real_robot:
+                try:
+                    self._rtde_c.stopL()
+                except:
+                    pass
+            self.state.status = ArmStatus.IDLE
+            logger.info(f"[Arm] {self.state.name} stopped")
+    
+    def set_object_in_hand(self, object_id: Optional[str]):
+        with self._lock:
+            self.state.object_in_hand = object_id
+    
+    def set_current_task(self, task_id: Optional[str]):
+        with self._lock:
+            self.state.current_task = task_id
+    
+    def can_reach(self, zone: str) -> bool:
+        return zone in self.state.reachable_zones
+    
+    def disconnect(self):
+        if self._real_robot:
+            try:
+                self._rtde_c.disconnect()
+                logger.info(f"[Arm] {self.state.name} disconnected")
+            except:
+                pass
+
+
+class MultiArmManager:
+    def __init__(self, config_path: Optional[str] = None, use_simulator: bool = True):
+        self.arms: Dict[str, RobotArm] = {}
+        self.objects: Dict[str, Dict] = {}
+        self.object_states: Dict[str, Dict] = {}
+        self._lock = threading.Lock()
+        self.use_simulator = use_simulator
+        
+        if config_path:
+            self.load_config(config_path)
+        
+        logger.info(f"[MultiArmManager] Initialized with {len(self.arms)} arms")
+    
+    def load_config(self, config_path: str):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        for arm_id, arm_config in config.get("robots", {}).items():
+            arm = RobotArm(
+                arm_id=arm_id,
+                name=arm_config.get("name", arm_id),
+                host=arm_config.get("host", ""),
+                home_position=arm_config.get("home_position", [0.3, 0.0, 0.4, 0.0, 3.14159, 0.0]),
+                reachable_zones=arm_config.get("reachable_zones", []),
+                use_simulator=self.use_simulator
+            )
+            self.arms[arm_id] = arm
+        
+        self.objects = config.get("objects", {})
+
+        for obj_id, obj_data in self.objects.items():
+            self.object_states[obj_id] = {
+                "status": obj_data.get("status", "unknown"),
+                "held_by": None,
+                "position": obj_data.get("position", [0, 0, 0])
+            }
+
+        logger.info(f"[MultiArmManager] Loaded: {len(self.arms)} arms, {len(self.objects)} objects")
+    
+    def get_arm(self, arm_id: str) -> Optional[RobotArm]:
+        return self.arms.get(arm_id)
+    
+    def get_available_arm(self, zone: Optional[str] = None) -> Optional[str]:
+        with self._lock:
+            for arm_id, arm in self.arms.items():
+                if not arm.state.is_busy():
+                    if zone is None or arm.can_reach(zone):
+                        return arm_id
+            return None
+    
+    def get_available_arms(self) -> List[str]:
+        with self._lock:
+            return [arm_id for arm_id, arm in self.arms.items() if not arm.state.is_busy()]
+    
+    def get_object_position(self, object_id: str) -> Optional[List[float]]:
+        obj = self.objects.get(object_id)
+        if obj:
+            return obj.get("position", [0, 0, 0])
+        return None
+    
+    def get_object_info(self, object_id: str) -> Optional[Dict]:
+        return self.objects.get(object_id)
+    
+    def get_approach_position(self, object_id: str) -> Optional[List[float]]:
+        obj = self.objects.get(object_id)
+        if obj:
+            pos = obj.get("position", [0, 0, 0])
+            offset = obj.get("approach_offset", [0, 0, 0.1])
+            if len(pos) < 6:
+                pos = list(pos) + [0, 3.14159, 0]
+            return [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2],
+                    pos[3], pos[4], pos[5]]
+        return None
+    
+    def update_object_state(self, object_id: str, status: str = None, 
+                           held_by: str = None, position: List[float] = None):
+        with self._lock:
+            if object_id in self.object_states:
+                if status is not None:
+                    self.object_states[object_id]["status"] = status
+                if held_by is not None:
+                    self.object_states[object_id]["held_by"] = held_by
+                if position is not None:
+                    self.object_states[object_id]["position"] = position
+    
+    def get_object_state(self, object_id: str) -> Optional[Dict]:
+        return self.object_states.get(object_id)
+    
+    def get_all_states(self) -> Dict:
+        with self._lock:
+            available_arms = [arm_id for arm_id, arm in self.arms.items() if not arm.state.is_busy()]
+            return {
+                "arms": {arm_id: arm.state.to_dict() for arm_id, arm in self.arms.items()},
+                "objects": self.object_states,
+                "available_arms": available_arms,
+            }
+    
+    def get_scene_summary(self) -> str:
+        with self._lock:
+            lines = ["## Workcell State", ""]
+            lines.append("### Arms:")
+            for arm_id, arm in self.arms.items():
+                status = arm.state.status.value
+                task = arm.state.current_task or "idle"
+                obj = arm.state.object_in_hand or "none"
+                lines.append(f"  - {arm.state.name}: {status}, task={task}, holding={obj}")
+
+            lines.append("\n### Objects:")
+            for obj_id, state in self.object_states.items():
+                status = state.get("status", "unknown")
+                held = state.get("held_by", "none")
+                lines.append(f"  - {obj_id}: {status}, held_by={held}")
+
+            return "\n".join(lines)
+    
+    def reset(self):
+        with self._lock:
+            for arm in self.arms.values():
+                arm.moveL(arm.state.home_position)
+                arm.open_gripper()
+                arm.set_current_task(None)
+                arm.set_object_in_hand(None)
+
+            for obj_id, obj_data in self.objects.items():
+                self.object_states[obj_id] = {
+                    "status": obj_data.get("status", "unknown"),
+                    "held_by": None,
+                    "position": obj_data.get("position", [0, 0, 0])
+                }
+
+        logger.info("[MultiArmManager] All arms reset")
+    
+    def disconnect_all(self):
+        for arm in self.arms.values():
+            arm.disconnect()
+        logger.info("[MultiArmManager] All arms disconnected")
