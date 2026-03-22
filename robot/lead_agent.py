@@ -19,6 +19,7 @@ from robot.skill_loader import get_skill_loader, SkillLoader
 from robot.task_persistence import TaskPersistence, Task
 
 
+# 主协调智能体系统提示词
 LEAD_SYSTEM_PROMPT = """你是双臂机器人系统的Lead智能体，负责**规划细粒度任务链**并协调执行。
 
 ## 核心职责
@@ -129,6 +130,17 @@ update_task(task_id="1", status="completed")
 
 
 class LeadAgent:
+    """主协调智能体（Lead Agent），负责任务规划和多机械臂协调
+
+    核心职责：
+    1. 将用户目标分解为细粒度任务链
+    2. 创建持久化任务，设置依赖关系
+    3. 生成机械臂队友智能体
+    4. 按依赖顺序分配任务给队友
+    5. 协调双臂协作
+
+    架构：Lead Agent -> 多个 ArmTeammate -> 控制机械臂
+    """
     def __init__(
         self,
         config_path: Optional[str] = None,
@@ -139,23 +151,41 @@ class LeadAgent:
         tasks_dir: Optional[str] = None,
         skills_dir: Optional[str] = None,
     ):
+        """
+        参数:
+            config_path: 机械臂配置文件路径
+            model: Claude 模型名称
+            use_simulator: 是否仿真模式
+            api_key: Anthropic API 密钥
+            stream_callback: 流式输出回调
+            tasks_dir: 任务持久化目录
+            skills_dir: 技能定义目录
+        """
         self.config_path = config_path
         self.model = model or os.environ.get("MODEL_ID", "minimax-m2.5")
         self.use_simulator = use_simulator if use_simulator is not None else os.environ.get("USE_SIMULATOR", "true").lower() == "true"
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self.base_url = os.environ.get("ANTHROPIC_BASE_URL")
         self.stream_callback = stream_callback
-        
+
+        # 初始化多机械臂管理器
         self.manager = MultiArmManager(config_path, use_simulator=self.use_simulator)
+        # 初始化消息总线
         self.bus = MessageBus()
+        # 初始化协调协议
         self.protocol = CoordinationProtocol(self.bus)
+        # 初始化团队状态
         self.team_state = TeamState()
-        
+
+        # 技能加载器
         self.skill_loader = get_skill_loader(skills_dir)
+        # 任务持久化
         self.task_persistence = TaskPersistence(tasks_dir)
-        
+
+        # 添加自己作为协调成员
         self.team_state.add_member("lead", "coordinator", ["spawn", "assign", "coordinate", "monitor"])
-        
+
+        # 初始化队友管理器（管理机械臂队友智能体）
         self.teammate_manager = TeammateManager(
             manager=self.manager,
             bus=self.bus,
@@ -167,17 +197,18 @@ class LeadAgent:
             stream_callback=self.stream_callback,
             skill_loader=self.skill_loader,
         )
-        
-        self.messages: List[Dict] = []
-        self.max_iterations = 50
-        self._client = None
-        
+
+        self.messages: List[Dict] = []           # 对话消息历史
+        self.max_iterations = 50                 # 最大工具调用迭代次数
+        self._client = None                      # 延迟初始化 Anthropic 客户端
+
         logger.info(f"[LeadAgent] Initialized with model: {self.model}")
         logger.info(f"[LeadAgent] Skills loaded: {', '.join(self.skill_loader.list_skills())}")
         logger.info(f"[LeadAgent] Tasks directory: {self.task_persistence.tasks_dir}")
-    
+
     @property
     def client(self):
+        """懒加载获取 Anthropic API 客户端"""
         if self._client is None and self.api_key:
             try:
                 import anthropic
@@ -188,39 +219,42 @@ class LeadAgent:
             except ImportError:
                 logger.warning("[LeadAgent] anthropic package not installed")
         return self._client
-    
+
     def _emit(self, event_type: str, content: str):
+        """发送事件到流回调并记录日志"""
         if self.stream_callback:
             self.stream_callback(event_type, content)
         # 只记录非thinking事件，避免日志爆炸
         if event_type != "thinking":
             logger.info(f"[LeadAgent][{event_type}] {content[:200]}...")
-    
+
     def chat(self, user_message: str) -> str:
+        """非流式对话入口"""
         self.messages.append({"role": "user", "content": user_message})
-        
+
         if not self.client:
             return self._handle_offline(user_message)
-        
+
         try:
             return self._run_agent_loop()
         except Exception as e:
             logger.error(f"[LeadAgent] Error: {e}")
             return f"Error: {str(e)}"
-    
+
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
+        """流式对话入口，生成器方式输出思考过程和结果"""
         self.messages.append({"role": "user", "content": user_message})
-        
+
         if not self.client:
             yield self._handle_offline(user_message)
             return
-        
+
         messages = self._build_messages()
         tools = self._get_tools()
-        
+
         for iteration in range(self.max_iterations):
             self._emit("iteration", f"Starting iteration {iteration + 1}")
-            
+
             try:
                 with self.client.messages.stream(
                     model=self.model,
@@ -325,11 +359,15 @@ class LeadAgent:
             return "Unexpected stop condition."
         
         return "Max iterations reached without completion."
-    
+
     def _build_messages(self) -> List[Dict]:
+        """构建发送给 Claude 的消息列表
+
+        读取队友发来的新消息，放入 inbox 标签追加到对话
+        """
         inbox = self.bus.read_inbox("lead")
         messages = list(self.messages)
-        
+
         if inbox:
             inbox_content = "\n".join([
                 f"From {msg.sender}: {msg.content}"
@@ -339,12 +377,13 @@ class LeadAgent:
                 "role": "user",
                 "content": f"<inbox>\n{inbox_content}\n</inbox>"
             })
-        
+
         return messages
-    
+
     def _execute_tool(self, name: str, params: Dict) -> ToolResult:
+        """分发工具执行到对应的处理函数"""
         logger.info(f"[LeadAgent] Tool call: {name}({params})")
-        
+
         if name == "spawn_teammate":
             return self._tool_spawn_teammate(params)
         elif name == "assign_task":
@@ -377,8 +416,9 @@ class LeadAgent:
             return self._tool_load_skill(params)
         else:
             return ToolResult(ToolStatus.ERROR, f"Unknown tool: {name}")
-    
+
     def _tool_spawn_teammate(self, params: Dict) -> ToolResult:
+        """工具：生成一个机械臂队友智能体"""
         name = params.get("name", "")
         arm_id = params.get("arm_id", "")
         prompt = params.get("prompt", "You are now online. Stand by for task assignments.")

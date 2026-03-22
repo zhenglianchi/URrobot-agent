@@ -10,18 +10,21 @@ from utils.logger_handler import logger
 
 
 class ToolStatus(Enum):
+    """工具执行状态枚举"""
     SUCCESS = "success"
     FAILED = "failed"
 
 
 @dataclass
 class ToolResult:
-    status: ToolStatus
-    message: str
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    """工具执行结果"""
+    status: ToolStatus       # 执行状态
+    message: str             # 结果消息
+    data: Optional[Dict[str, Any]] = None  # 返回数据
+    error: Optional[str] = None  # 错误信息
 
     def to_string(self, max_length: int = 3000) -> str:
+        """转换为字符串，截断过长内容"""
         result = {"status": self.status.value, "message": self.message}
         if self.data:
             result["data"] = self.data
@@ -34,18 +37,37 @@ class ToolResult:
 
 
 class ToolRegistry:
+    """工具注册表，管理所有可用工具，支持注册和执行"""
     def __init__(self):
-        self.tools: Dict[str, Dict] = {}
-        self.handlers: Dict[str, Callable] = {}
+        self.tools: Dict[str, Dict] = {}       # 工具定义
+        self.handlers: Dict[str, Callable] = {}  # 工具处理函数
 
     def register(self, name: str, description: str, input_schema: Dict, handler: Callable):
+        """注册一个新工具
+
+        参数:
+            name: 工具名称
+            description: 工具描述（给 AI 看）
+            input_schema: 输入参数 schema
+            handler: 处理函数
+        """
         self.tools[name] = {"name": name, "description": description, "input_schema": input_schema}
         self.handlers[name] = handler
 
     def get_tools_schema(self) -> List[Dict]:
+        """获取所有工具的 schema，给 Claude API"""
         return list(self.tools.values())
 
     def execute(self, name: str, params: Dict) -> ToolResult:
+        """执行工具调用
+
+        参数:
+            name: 工具名称
+            params: 输入参数字典
+
+        返回:
+            工具执行结果
+        """
         if name not in self.handlers:
             return ToolResult(status=ToolStatus.FAILED, message=f"Unknown tool: {name}", error="TOOL_NOT_FOUND")
         try:
@@ -55,6 +77,11 @@ class ToolRegistry:
 
 
 def create_robot_tools(manager, task_queue, arm_id: str = None) -> ToolRegistry:
+    """创建机器人工具注册表
+
+    如果 arm_id 指定，则创建受限工具集（只能操作指定机械臂）
+    否则创建全局工具集（可以操作任意机械臂）
+    """
     registry = ToolRegistry()
     restricted_arm = arm_id
 

@@ -1,31 +1,47 @@
+"""
+URRobot-Agent: 基于大语言模型的双臂机器人协作智能系统
+
+项目架构：
+- LeadAgent: 主协调智能体，分解任务规划流程
+- ArmTeammate: 机械臂队友智能体，执行具体动作
+- MultiArmManager: 多机械臂硬件管理
+- MessageBus: 消息总线，队友间通信
+- TaskPersistence: 任务持久化存储
+- SkillLoader: 技能加载
+"""
+
 import os
 import sys
 import shutil
 from dotenv import load_dotenv
 
+# 加载环境变量
 load_dotenv()
 
+# 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from robot.lead_agent import create_lead_agent
 
 
 def clear_line():
-    """清除当前行，用于覆盖输出"""
+    """清除终端当前行，用于覆盖式输出思考过程"""
     columns = shutil.get_terminal_size().columns
     print('\r' + ' ' * columns + '\r', end='', flush=True)
 
 
 def stream_print(text: str, end=''):
-    """流式输出，不自动换行"""
+    """流式输出文本，不自动换行，保持思考过程在一行"""
     print(text, end=end, flush=True)
 
 
 def print_separator(char='=', length=60):
+    """打印分隔线"""
     print(char * length)
 
 
 def main():
+    """命令行主入口，运行交互式对话"""
     print_separator()
     print("🤖 双臂机器人智能控制系统 - 命令行模式")
     print_separator()
