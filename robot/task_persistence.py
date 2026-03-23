@@ -5,11 +5,32 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+from datetime import datetime
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger_handler import logger
+
+
+def get_current_time_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def timestamp_to_str(ts: Optional[float]) -> Optional[str]:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def str_to_timestamp(s: Optional[str]) -> Optional[float]:
+    if s is None:
+        return None
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+        return dt.timestamp()
+    except ValueError:
+        return None
 
 
 class TaskStatus(Enum):
@@ -32,28 +53,66 @@ class TaskPriority(Enum):
 class Task:
     task_id: str
     name: str
-    description: str
-    actions: List[Dict] = field(default_factory=list)
-    dependencies: List[str] = field(default_factory=list)
+    description: str = ""
     priority: str = "normal"
     status: str = "pending"
     assigned_arm: Optional[str] = None
-    required_arm: Optional[str] = None
-    required_zone: Optional[str] = None
-    created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    created_at: str = field(default_factory=get_current_time_str)
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     result: Optional[str] = None
     skill_name: Optional[str] = None
     blocked_by: List[int] = field(default_factory=list)
     blocks: List[int] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
-        return asdict(self)
+        return {
+            "task_id": self.task_id,
+            "name": self.name,
+            "description": self.description,
+            "priority": self.priority,
+            "status": self.status,
+            "assigned_arm": self.assigned_arm,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "result": self.result,
+            "skill_name": self.skill_name,
+            "blocked_by": self.blocked_by,
+            "blocks": self.blocks,
+        }
 
     @classmethod
     def from_dict(cls, data: Dict) -> "Task":
-        return cls(**data)
+        created_at = data.get("created_at")
+        if created_at is None:
+            created_at = get_current_time_str()
+        elif isinstance(created_at, (int, float)):
+            created_at = timestamp_to_str(created_at)
+        
+        started_at = data.get("started_at")
+        if isinstance(started_at, (int, float)):
+            started_at = timestamp_to_str(started_at)
+        
+        completed_at = data.get("completed_at")
+        if isinstance(completed_at, (int, float)):
+            completed_at = timestamp_to_str(completed_at)
+        
+        return cls(
+            task_id=data.get("task_id", ""),
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            priority=data.get("priority", "normal"),
+            status=data.get("status", "pending"),
+            assigned_arm=data.get("assigned_arm"),
+            created_at=created_at,
+            started_at=started_at,
+            completed_at=completed_at,
+            result=data.get("result"),
+            skill_name=data.get("skill_name"),
+            blocked_by=data.get("blocked_by", []),
+            blocks=data.get("blocks", []),
+        )
 
 
 class TaskPersistence:
@@ -114,11 +173,7 @@ class TaskPersistence:
         self,
         name: str,
         description: str = "",
-        actions: List[Dict] = None,
-        dependencies: List[str] = None,
         priority: str = "normal",
-        required_arm: str = None,
-        required_zone: str = None,
         skill_name: str = None,
         assigned_arm: str = None,
         blocked_by: List[int] = None,
@@ -132,13 +187,9 @@ class TaskPersistence:
                 task_id=task_id,
                 name=name,
                 description=description,
-                actions=actions or [],
-                dependencies=dependencies or [],
                 priority=priority,
                 status="pending",
                 assigned_arm=assigned_arm,
-                required_arm=required_arm,
-                required_zone=required_zone,
                 skill_name=skill_name,
                 blocked_by=blocked_by or [],
                 blocks=blocks or [],
@@ -147,10 +198,17 @@ class TaskPersistence:
             self._save(task)
             self._cache[task_id] = task
 
-            if task.blocks:
-                for blocked_id in task.blocks:
-                    blocked_task = self.get(str(blocked_id))
-                    if blocked_task and task_id not in [str(x) for x in blocked_task.blocked_by]:
+            for blocker_id in task.blocked_by:
+                blocker_task = self.get(str(blocker_id))
+                if blocker_task:
+                    if int(task_id) not in blocker_task.blocks:
+                        blocker_task.blocks.append(int(task_id))
+                        self._save(blocker_task)
+
+            for blocked_id in task.blocks:
+                blocked_task = self.get(str(blocked_id))
+                if blocked_task:
+                    if int(task_id) not in blocked_task.blocked_by:
                         blocked_task.blocked_by.append(int(task_id))
                         self._save(blocked_task)
 
@@ -181,9 +239,9 @@ class TaskPersistence:
                 task.status = status
 
                 if status == "running" and task.started_at is None:
-                    task.started_at = time.time()
+                    task.started_at = get_current_time_str()
                 elif status == "completed":
-                    task.completed_at = time.time()
+                    task.completed_at = get_current_time_str()
                     self._clear_dependency(int(task_id))
 
             if assigned_arm is not None:
@@ -195,6 +253,10 @@ class TaskPersistence:
                 for bid in add_blocked_by:
                     if bid not in task.blocked_by:
                         task.blocked_by.append(bid)
+                        blocker_task = self.get(str(bid))
+                        if blocker_task and int(task_id) not in blocker_task.blocks:
+                            blocker_task.blocks.append(int(task_id))
+                            self._save(blocker_task)
 
             if add_blocks:
                 for bid in add_blocks:
@@ -210,19 +272,39 @@ class TaskPersistence:
             return task
 
     def _clear_dependency(self, completed_id: int):
+        completed_task = self._cache.get(str(completed_id))
         for task in self._cache.values():
             if completed_id in task.blocked_by:
                 task.blocked_by.remove(completed_id)
                 self._save(task)
+            if completed_task and int(task.task_id) in completed_task.blocks:
+                completed_task.blocks.remove(int(task.task_id))
+        if completed_task:
+            self._save(completed_task)
 
     def delete(self, task_id: str) -> bool:
         with self._lock:
-            if task_id in self._cache:
-                del self._cache[task_id]
-                self._delete_file(task_id)
-                logger.info(f"[TaskPersistence] Deleted task {task_id}")
-                return True
-            return False
+            if task_id not in self._cache:
+                return False
+            
+            task = self._cache[task_id]
+            
+            for blocker_id in task.blocked_by:
+                blocker_task = self.get(str(blocker_id))
+                if blocker_task and int(task_id) in blocker_task.blocks:
+                    blocker_task.blocks.remove(int(task_id))
+                    self._save(blocker_task)
+            
+            for blocked_id in task.blocks:
+                blocked_task = self.get(str(blocked_id))
+                if blocked_task and int(task_id) in blocked_task.blocked_by:
+                    blocked_task.blocked_by.remove(int(task_id))
+                    self._save(blocked_task)
+            
+            del self._cache[task_id]
+            self._delete_file(task_id)
+            logger.info(f"[TaskPersistence] Deleted task {task_id}")
+            return True
 
     def list_all(self, status: str = None) -> List[Task]:
         tasks = list(self._cache.values())

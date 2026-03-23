@@ -19,114 +19,285 @@ from robot.skill_loader import get_skill_loader, SkillLoader
 from robot.task_persistence import TaskPersistence, Task
 
 
-# 主协调智能体系统提示词
-LEAD_SYSTEM_PROMPT = """你是双臂机器人系统的Lead智能体，负责**规划细粒度任务链**并协调执行。
+class LeadToolRegistry:
+    """Lead Agent 工具注册表，集中管理所有工具定义"""
+    
+    _tools: Dict[str, Dict] = {}
+    _initialized = False
+    
+    @classmethod
+    def _init_tools(cls):
+        if cls._initialized:
+            return
+        
+        cls._tools = {
+            "spawn_teammate": {
+                "description": "生成一个机械臂队友智能体。分配任务前必须先调用此工具创建队友。单臂任务生成一个，双臂协作生成两个。**只能生成 left_arm 和 right_arm 两个队友**。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "队友名称 (必须是 left_arm 或 right_arm)"},
+                        "arm_id": {"type": "string", "enum": ["arm_left", "arm_right"], "description": "要控制的机械臂ID"},
+                        "prompt": {"type": "string", "description": "给队友的初始指令"}
+                    },
+                    "required": ["name", "arm_id"]
+                }
+            },
+            "assign_task": {
+                "description": "给已生成的队友分配一个任务。**必须包含 task_id 字段**，用于关联持久化任务。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "teammate": {"type": "string", "description": "要分配任务的队友名称"},
+                        "task": {"type": "object", "description": "任务详情: {task_id, skill, action, params}"}
+                    },
+                    "required": ["teammate", "task"]
+                }
+            },
+            "broadcast": {
+                "description": "给所有已生成的队友发送广播消息",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"content": {"type": "string", "description": "消息内容"}},
+                    "required": ["content"]
+                }
+            },
+            "send_message": {
+                "description": "给指定的队友发送消息",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "接收消息的队友名称"},
+                        "content": {"type": "string", "description": "消息内容"},
+                        "msg_type": {"type": "string", "enum": ["message", "coordination"]}
+                    },
+                    "required": ["to", "content"]
+                }
+            },
+            "read_inbox": {
+                "description": "读取队友发来的消息（任务更新、协调请求等）",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            "list_teammates": {
+                "description": "列出所有已生成队友和它们的当前状态",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            "get_scene_state": {
+                "description": "获取完整工作单元状态：机械臂位置、物体位置、夹爪状态",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            "get_task_status": {
+                "description": "通过task_id检查已分配任务的状态",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"task_id": {"type": "string", "description": "要检查的任务ID"}},
+                    "required": ["task_id"]
+                }
+            },
+            "shutdown_teammate": {
+                "description": "任务完成后关闭指定队友",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "description": "要关闭的队友名称"}},
+                    "required": ["name"]
+                }
+            },
+            "shutdown_all": {
+                "description": "关闭所有队友",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            "create_task": {
+                "description": "创建持久化任务。任务会保存到文件，重启后仍可恢复。**每个原子操作创建一个任务**。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "任务名称（如：抓取螺丝刀、拧松螺丝）"},
+                        "description": {"type": "string", "description": "任务描述"},
+                        "skill_name": {"type": "string", "description": "关联的技能名称（如：pick-screwdriver, loosen-screw）"},
+                        "assigned_arm": {"type": "string", "enum": ["left_arm", "right_arm"], "description": "分配给哪个机械臂执行"},
+                        "blocked_by": {"type": "array", "items": {"type": "integer"}, "description": "前置任务ID列表（此任务必须等待这些任务完成）"},
+                        "blocks": {"type": "array", "items": {"type": "integer"}, "description": "后置任务ID列表（此任务完成后这些任务才能开始）"}
+                    },
+                    "required": ["name"]
+                }
+            },
+            "update_task": {
+                "description": "更新任务状态。任务完成时调用此工具标记完成。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "任务ID"},
+                        "status": {"type": "string", "enum": ["pending", "ready", "running", "completed", "failed", "blocked"], "description": "新状态"},
+                        "result": {"type": "string", "description": "任务结果描述"}
+                    },
+                    "required": ["task_id"]
+                }
+            },
+            "list_tasks": {
+                "description": "列出所有持久化任务",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string", "description": "按状态筛选（可选）"}}
+                }
+            },
+            "get_task": {
+                "description": "获取指定任务的详情",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"task_id": {"type": "string", "description": "任务ID"}},
+                    "required": ["task_id"]
+                }
+            },
+            "load_skill": {
+                "description": "加载指定技能的详细执行步骤。了解技能的具体操作流程。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "description": "技能名称，如 pick-old-oru, tighten-screw 等"}},
+                    "required": ["name"]
+                }
+            }
+        }
+        cls._initialized = True
+    
+    @classmethod
+    def register(cls, name: str, description: str, input_schema: Dict):
+        """注册新工具"""
+        cls._init_tools()
+        cls._tools[name] = {"description": description, "input_schema": input_schema}
+    
+    @classmethod
+    def unregister(cls, name: str):
+        """注销工具"""
+        cls._init_tools()
+        cls._tools.pop(name, None)
+    
+    @classmethod
+    def get_tool(cls, name: str) -> Optional[Dict]:
+        """获取单个工具定义"""
+        cls._init_tools()
+        tool = cls._tools.get(name)
+        if tool:
+            return {"name": name, **tool}
+        return None
+    
+    @classmethod
+    def get_all_tools(cls) -> List[Dict]:
+        """获取所有工具定义（用于 API 调用）"""
+        cls._init_tools()
+        return [{"name": name, **tool} for name, tool in cls._tools.items()]
+    
+    @classmethod
+    def get_tools_description(cls) -> str:
+        """获取工具描述列表（用于系统提示词）"""
+        cls._init_tools()
+        lines = []
+        for name, tool in cls._tools.items():
+            lines.append(f"  - {name}: {tool['description'].split('。')[0]}")
+        return "\n".join(lines)
+
+
+def build_system_prompt(skill_loader: SkillLoader) -> str:
+    skills_desc = skill_loader.get_descriptions()
+    tools_desc = LeadToolRegistry.get_tools_description()
+    
+    return f"""你是双臂机器人系统的Lead智能体，负责**规划任务链**并协调双臂协作执行。
 
 ## 核心职责
-1. **任务分解**：将用户目标分解为一系列**原子操作**，每个操作对应一个技能
+1. **任务分解**：将用户目标分解为一系列原子操作，每个操作对应一个技能
 2. **任务持久化**：使用 `create_task` 为每个原子操作创建独立任务
-3. **依赖管理**：设置任务间的 `blocked_by` 依赖关系
+3. **依赖管理**：设置任务间的 `blocked_by` 和 `blocks` 双向依赖关系
 4. **协调执行**：按依赖顺序分配任务给机械臂，等待完成后再分配下一个
 
-## 固定团队（只使用这两个）
+## 固定团队
 - **left_arm**: 左侧UR5机械臂 (arm_id: arm_left)
 - **right_arm**: 右侧UR5机械臂 (arm_id: arm_right)
 
-## 可用技能 (Skills) - 每个技能对应一个原子操作
-| 技能名称 | 描述 | 执行者建议 |
-|---------|------|-----------|
-| pick-screwdriver | 从工具架抓取螺丝刀 | 任意空闲臂 |
-| loosen-screw | 拧松装配站螺丝 | 需持有螺丝刀 |
-| tighten-screw | 拧紧装配站螺丝 | 需持有螺丝刀 |
-| pick-old-oru | 从装配站抓取旧ORU | 螺丝拧松后 |
-| pull-out-oru | 将ORU从装配站拔出 | 抓取后 |
-| place-to-storage | 将ORU放置到储物架 | 拔出后 |
-| pick-new-oru | 从储物架抓取新ORU | 任意空闲臂 |
-| insert-oru | 将ORU插入装配站 | 抓取后 |
+## 可用技能
+{skills_desc}
 
-## 任务规划流程（必须遵循）
+使用 `load_skill` 工具可获取技能的详细执行步骤。
 
-### Step 1: 分析目标，规划任务链
-根据用户目标，规划完整的任务链。例如"更换ORU"：
+## 可用工具
+{tools_desc}
 
-```
-任务链规划：
-#1 [pick-screwdriver] left_arm 抓取螺丝刀
-#2 [loosen-screw] left_arm 拧松螺丝 (blocked_by: #1)
-#3 [pick-old-oru] left_arm 抓取旧ORU (blocked_by: #2)
-#4 [pull-out-oru] left_arm 拔出旧ORU (blocked_by: #3)
-#5 [place-to-storage] left_arm 放置到储物架 (blocked_by: #4)
-#6 [pick-new-oru] right_arm 抓取新ORU (可与#5并行)
-#7 [insert-oru] right_arm 插入装配站 (blocked_by: #6)
-#8 [pick-screwdriver] left_arm 抓取螺丝刀 (blocked_by: #5, #7)
-#9 [tighten-screw] left_arm 拧紧螺丝 (blocked_by: #8)
-```
+## ⚠️ 关键状态约束（必须遵守）
 
-### Step 2: 创建持久化任务
-为每个步骤调用 `create_task`，设置依赖关系：
+### 物体状态依赖
+| 操作 | 前置状态 | 违反后果 |
+|-----|---------|---------|
+| loosen-screw | 机械臂必须持有 screwdriver | 无法拧松，任务失败 |
+| pick-old-oru | 机械臂夹爪必须打开 | 无法抓取，任务失败 |
+| pull-out-oru | 螺丝必须已拧松（oru_old 状态为 "loose"），机械臂持有 oru_old | 无法拔出，任务卡死 |
+| insert-oru | 机械臂必须持有 oru_new | 无法插入，任务失败 |
+| tighten-screw | 机械臂必须持有 screwdriver | 无法拧紧，任务失败 |
+
+### 双臂协作约束
+- **同一物体只能被一个机械臂持有**：如果 left_arm 持有 oru_old，right_arm 不能再抓取它
+- **夹爪状态**：抓取前夹爪必须打开，抓取后夹爪必须闭合
+- **位置冲突**：两个机械臂不能同时操作同一位置的物体
+
+### 任务阻塞规则
+- `blocked_by`: 当前任务依赖的前置任务列表（必须等这些任务完成）
+- `blocks`: 当前任务阻塞的后继任务列表（当前任务完成后这些任务才能开始）
+- **双向同步**：如果任务A blocked_by 任务B，则任务B blocks 任务A（系统自动维护）
+
+## 任务规划流程
+
+### Step 1: 分析目标 → 规划任务链
+根据用户目标，分析需要哪些技能，确定执行顺序和依赖关系：
+- 识别前置依赖：哪些操作必须在其他操作之前完成？
+- 识别并行机会：哪些操作可以同时由不同机械臂执行？
+- 设置阻塞关系：使用 `blocked_by` 标记依赖
+
+### Step 2: 创建任务
 ```python
-create_task(name="抓取螺丝刀", skill_name="pick-screwdriver", assigned_arm="left_arm")
-create_task(name="拧松螺丝", skill_name="loosen-screw", assigned_arm="left_arm", blocked_by=[1])
-create_task(name="抓取旧ORU", skill_name="pick-old-oru", assigned_arm="left_arm", blocked_by=[2])
-# ... 依此类推
+create_task(
+    name="任务名称",
+    skill_name="技能名称",
+    assigned_arm="left_arm",  # 或 "right_arm"
+    blocked_by=[1, 2]  # 依赖的任务ID列表
+)
 ```
 
-### Step 3: 生成队友并执行
+### Step 3: 生成队友
 ```python
 spawn_teammate(name="left_arm", arm_id="arm_left")
 spawn_teammate(name="right_arm", arm_id="arm_right")
 ```
 
-### Step 4: 按依赖顺序分配任务
+### Step 4: 执行任务
 ```python
-# 分配第一个任务
-assign_task(teammate="left_arm", task={skill: "pick-screwdriver", action: "抓取螺丝刀"})
-read_inbox  # 等待完成
-
-# 分配下一个任务
-assign_task(teammate="left_arm", task={skill: "loosen-screw", action: "拧松螺丝"})
-read_inbox  # 等待完成
-
-# ... 继续分配后续任务
+assign_task(teammate="left_arm", task={{"skill": "技能名", "action": "动作描述", "task_id": "1"}})
+read_inbox  # 等待结果，会收到 task_status 类型的消息
+# 收到状态报告后，自动更新持久化任务
+update_task(task_id="1", status="completed")  # 更新状态
 ```
 
-### Step 5: 更新任务状态
-任务完成后调用 `update_task` 更新状态：
-```python
-update_task(task_id="1", status="completed")
+## 处理队友状态报告
+当 `read_inbox` 收到 `task_status` 类型消息时：
+```json
+{{"sender": "left_arm", "msg_type": "task_status", "content": "执行结果", "extra": {{"task_id": "1", "status": "completed"}}}}
 ```
+**必须调用 `update_task` 更新持久化任务状态！**
 
-## 关键规则
-1. **每个原子操作一个任务**：不能笼统分配"更换ORU"，必须分解为每个具体动作
-2. **先规划后执行**：先用 `create_task` 创建所有任务，再开始执行
-3. **依赖关系**：使用 `blocked_by` 设置前置依赖
-4. **等待完成**：每次 `assign_task` 后必须 `read_inbox` 等待结果
-5. **并行任务**：无依赖的任务可以同时分配给不同机械臂
+## 执行原则
+1. **先规划后执行**：先用 `create_task` 创建所有任务，再开始执行
+2. **检查状态**：执行前用 `get_scene_state` 确认前置条件满足
+3. **等待完成**：每次 `assign_task` 后必须 `read_inbox` 等待结果
+4. **更新状态**：收到队友状态报告后立即 `update_task` 更新状态
+5. **处理错误**：如果任务失败，分析原因并调整计划
 
-## 工具列表
-| 工具 | 用途 | 时机 |
-|-----|------|-----|
-| create_task | 创建持久化任务 | 规划阶段，为每个原子操作创建 |
-| update_task | 更新任务状态 | 任务完成后 |
-| list_tasks | 查看所有任务 | 检查进度 |
-| spawn_teammate | 生成机械臂队友 | 执行前 |
-| assign_task | 分配任务给队友 | 执行阶段 |
-| read_inbox | 读取队友反馈 | 每次分配后 |
-| get_scene_state | 获取场景状态 | 了解当前环境 |
-| load_skill | 加载技能详情 | 了解技能步骤 |
-
-## 示例对话
-
-用户: 更换装配站上的ORU
-
-你的响应:
-1. 首先规划任务链（9个原子操作）
-2. 调用 create_task 创建每个任务
-3. 调用 list_tasks 确认任务链
-4. spawn_teammate 生成两个队友
-5. 按顺序 assign_task → read_inbox → update_task
-6. 所有任务完成后报告结果
+## 常见错误及处理
+| 错误 | 原因 | 处理方法 |
+|-----|------|---------|
+| "ORU状态不是loose" | 螺丝未拧松就尝试抓取 | 先执行 loosen-screw |
+| "机械臂未持有工具" | 未抓取工具就执行操作 | 先执行对应的 pick 技能 |
+| "夹爪已闭合" | 抓取前夹爪未打开 | 检查机械臂状态 |
+| "位置冲突" | 两臂同时操作同一区域 | 调整任务顺序，避免并行 |
 """
+
+
+LEAD_SYSTEM_PROMPT = build_system_prompt(get_skill_loader())
 
 
 class LeadAgent:
@@ -199,7 +370,7 @@ class LeadAgent:
         )
 
         self.messages: List[Dict] = []           # 对话消息历史
-        self.max_iterations = 50                 # 最大工具调用迭代次数
+        self.max_iterations = 100                 # 最大工具调用迭代次数
         self._client = None                      # 延迟初始化 Anthropic 客户端
 
         logger.info(f"[LeadAgent] Initialized with model: {self.model}")
@@ -444,7 +615,8 @@ class LeadAgent:
         if not teammate_obj:
             return ToolResult(ToolStatus.ERROR, f"Teammate '{teammate}' not found. Spawn it first.")
         
-        task_id = self.protocol.assign_task("lead", teammate, task)
+        persistent_task_id = task.get("task_id")
+        task_id = self.protocol.assign_task("lead", teammate, task, persistent_task_id)
         return ToolResult(ToolStatus.SUCCESS, f"Task {task_id} assigned to {teammate}", {"task_id": task_id})
     
     def _tool_broadcast(self, params: Dict) -> ToolResult:
@@ -577,160 +749,7 @@ class LeadAgent:
         return ToolResult(ToolStatus.SUCCESS, f"Skill '{skill_name}' loaded", {"content": skill_content})
     
     def _get_tools(self) -> List[Dict]:
-        return [
-            {
-                "name": "spawn_teammate",
-                "description": "生成一个机械臂队友智能体。分配任务前必须先调用此工具创建队友。单臂任务生成一个，双臂协作生成两个。**只能生成 left_arm 和 right_arm 两个队友**。",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "队友名称 (必须是 left_arm 或 right_arm)"},
-                        "arm_id": {"type": "string", "enum": ["arm_left", "arm_right"], "description": "要控制的机械臂ID"},
-                        "prompt": {"type": "string", "description": "给队友的初始指令"}
-                    },
-                    "required": ["name", "arm_id"]
-                }
-            },
-            {
-                "name": "assign_task",
-                "description": "给已生成的队友分配一个任务。任务对象应包含动作类型和参数。每次只分配一个具体动作。",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "teammate": {"type": "string", "description": "要分配任务的队友名称"},
-                        "task": {"type": "object", "description": "任务详情: {action, target, params}"}
-                    },
-                    "required": ["teammate", "task"]
-                }
-            },
-            {
-                "name": "broadcast",
-                "description": "给所有已生成的队友发送广播消息",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string", "description": "消息内容"}
-                    },
-                    "required": ["content"]
-                }
-            },
-            {
-                "name": "send_message",
-                "description": "给指定的队友发送消息",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "to": {"type": "string", "description": "接收消息的队友名称"},
-                        "content": {"type": "string", "description": "消息内容"},
-                        "msg_type": {"type": "string", "enum": ["message", "coordination"]}
-                    },
-                    "required": ["to", "content"]
-                }
-            },
-            {
-                "name": "read_inbox",
-                "description": "读取队友发来的消息（任务更新、协调请求等）",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "list_teammates",
-                "description": "列出所有已生成队友和它们的当前状态",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "get_scene_state",
-                "description": "获取完整工作单元状态：机械臂位置、物体位置、夹爪状态",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "get_task_status",
-                "description": "通过task_id检查已分配任务的状态",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string", "description": "要检查的任务ID"}
-                    },
-                    "required": ["task_id"]
-                }
-            },
-            {
-                "name": "shutdown_teammate",
-                "description": "任务完成后关闭指定队友",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "要关闭的队友名称"}
-                    },
-                    "required": ["name"]
-                }
-            },
-            {
-                "name": "shutdown_all",
-                "description": "关闭所有队友",
-                "input_schema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "create_task",
-                "description": "创建持久化任务。任务会保存到文件，重启后仍可恢复。**每个原子操作创建一个任务**。",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "任务名称（如：抓取螺丝刀、拧松螺丝）"},
-                        "description": {"type": "string", "description": "任务描述"},
-                        "skill_name": {"type": "string", "description": "关联的技能名称（如：pick-screwdriver, loosen-screw）"},
-                        "assigned_arm": {"type": "string", "enum": ["left_arm", "right_arm"], "description": "分配给哪个机械臂执行"},
-                        "blocked_by": {"type": "array", "items": {"type": "integer"}, "description": "前置任务ID列表（此任务必须等待这些任务完成）"},
-                        "blocks": {"type": "array", "items": {"type": "integer"}, "description": "后置任务ID列表（此任务完成后这些任务才能开始）"}
-                    },
-                    "required": ["name"]
-                }
-            },
-            {
-                "name": "update_task",
-                "description": "更新任务状态。任务完成时调用此工具标记完成。",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string", "description": "任务ID"},
-                        "status": {"type": "string", "enum": ["pending", "ready", "running", "completed", "failed", "blocked"], "description": "新状态"},
-                        "result": {"type": "string", "description": "任务结果描述"}
-                    },
-                    "required": ["task_id"]
-                }
-            },
-            {
-                "name": "list_tasks",
-                "description": "列出所有持久化任务",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string", "description": "按状态筛选（可选）"}
-                    }
-                }
-            },
-            {
-                "name": "get_task",
-                "description": "获取指定任务的详情",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string", "description": "任务ID"}
-                    },
-                    "required": ["task_id"]
-                }
-            },
-            {
-                "name": "load_skill",
-                "description": "加载指定技能的详细执行步骤。了解技能的具体操作流程。",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "技能名称，如 pick-old-oru, tighten-screw 等"}
-                    },
-                    "required": ["name"]
-                }
-            }
-        ]
+        return LeadToolRegistry.get_all_tools()
     
     def _extract_text(self, content: List) -> str:
         texts = []

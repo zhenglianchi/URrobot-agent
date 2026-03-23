@@ -346,13 +346,13 @@ class MultiArmAgent:
 
 
 def create_agent(
-    """创建多机械臂智能体工厂函数"""
     config_path: Optional[str] = None,
     model: Optional[str] = None,
     use_simulator: bool = None,
     api_key: Optional[str] = None,
     stream_callback: Optional[Callable[[str, str], None]] = None,
 ) -> MultiArmAgent:
+    """创建多机械臂智能体工厂函数"""
     return MultiArmAgent(
         config_path=config_path,
         model=model,

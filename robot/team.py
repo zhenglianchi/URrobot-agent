@@ -186,10 +186,11 @@ class CoordinationProtocol:
         self._plan_requests: Dict[str, Dict] = {}    # 计划请求记录
         self._lock = threading.Lock()         # 线程安全锁
 
-    def assign_task(self, lead: str, teammate: str, task: Dict) -> str:
+    def assign_task(self, lead: str, teammate: str, task: Dict, task_id: str = None) -> str:
         """lead 给队友分配任务"""
         import uuid
-        task_id = str(uuid.uuid4())[:8]
+        if task_id is None:
+            task_id = str(uuid.uuid4())[:8]
         task["task_id"] = task_id
         task["status"] = "assigned"
         
