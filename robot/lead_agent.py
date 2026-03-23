@@ -225,16 +225,35 @@ def build_system_prompt(skill_loader: SkillLoader) -> str:
 ### 物体状态依赖
 | 操作 | 前置状态 | 违反后果 |
 |-----|---------|---------|
+| pick-screwdriver | 螺丝刀必须在工具架 (status: stored) | 无法抓取 |
 | loosen-screw | 机械臂必须持有 screwdriver | 无法拧松，任务失败 |
 | pick-old-oru | 机械臂夹爪必须打开 | 无法抓取，任务失败 |
 | pull-out-oru | 螺丝必须已拧松（oru_old 状态为 "loose"），机械臂持有 oru_old | 无法拔出，任务卡死 |
 | insert-oru | 机械臂必须持有 oru_new | 无法插入，任务失败 |
 | tighten-screw | 机械臂必须持有 screwdriver | 无法拧紧，任务失败 |
+| place-screwdriver | 机械臂必须持有 screwdriver，螺丝操作已完成 | 无法放回原位 |
 
 ### 双臂协作约束
 - **同一物体只能被一个机械臂持有**：如果 left_arm 持有 oru_old，right_arm 不能再抓取它
 - **夹爪状态**：抓取前夹爪必须打开，抓取后夹爪必须闭合
 - **位置冲突**：两个机械臂不能同时操作同一位置的物体
+- **工具归位**：所有螺丝操作完成后，**必须**执行 `place-screwdriver` 将螺丝刀放回工具架原位
+
+### 并行规划原则
+- **正确识别依赖关系**：
+  - ✅ **只对有依赖关系的任务设置阻塞**：只有真的必须等待前置任务完成才能开始的任务才需要 `blocked_by`
+  - ✅ **无依赖的任务可以并行**：如果两个任务分配给不同机械臂，且互不依赖，可以同时执行，不要设置阻塞
+  - ❌ **不要所有任务都依次阻塞**：不要让每个任务都只等待前一个任务完成，浪费并行机会
+- 示例：左臂抓取螺丝刀拧松螺丝的时候，右臂可以同时抓取新ORU准备安装，这两个任务不冲突，可以并行
+
+**完整ORU更换任务的标准步骤应该是：**
+1. pick-screwdriver (左臂)
+2. loosen-screw (左臂) → 这一步完成后才能拔旧ORU
+3. 拔出旧ORU后，右臂可以并行 pick-new-oru
+4. 旧ORU放置完成，新ORU插入到位
+5. tighten-screw (左臂)
+6. **place-screwdriver (左臂)** ← 必须有这一步，螺丝刀放回原位
+7. 完成
 
 ### 任务阻塞规则
 - `blocked_by`: 当前任务依赖的前置任务列表（必须等这些任务完成）

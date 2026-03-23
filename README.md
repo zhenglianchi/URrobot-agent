@@ -1,185 +1,69 @@
-# URrobot-agent - 基于大语言模型的双臂机器人多智能体协作控制系统
+# URrobot-agent - 基于 LangGraph 的双臂机器人多智能体协作控制系统
+
+> 带有自动审查agent的LLM驱动双臂机器人协作系统
 
 ## 项目概述
 
-URrobot-agent 是一个**基于大语言模型（LLM）的多智能体协作双臂机器人控制系统**，专为 Universal Robots UR5 机械臂设计，主要应用于工业维护场景中的 ORU（Online Replaceable Unit，可更换单元）自动更换任务。
+URrobot-agent 是一个**基于大语言模型（LLM）和 LangGraph 的多智能体协作双臂机器人控制系统**，专为 Universal Robots UR5 机械臂设计，主要应用于工业维护场景中的 ORU（Online Replaceable Unit，可更换单元）自动更换任务。
 
-该项目采用**层级式多智能体架构**，通过自然语言指令让AI自动规划、分解并协作完成复杂的机器人操作任务。
+该项目采用**显式图状态流转 + 自动审查**架构，支持双臂异步并行执行，每次操作完成后自动由审查agent检查场景状态一致性，发现问题触发主agent调整。
 
-## 核心功能
+## 核心特性
 
-| 功能 | 描述 |
+| 特性 | 描述 |
 |-----|------|
 | **自然语言任务理解** | 用户用自然语言描述任务（如"更换装配站上的ORU"），AI自动理解并执行 |
-| **层级多智能体协作** | Lead智能体负责规划分解，每个机械臂作为独立队友智能体并行执行任务 |
-| **技能化任务设计** | 预定义原子技能（如抓取螺丝刀、拧螺丝等），技能以Markdown文件存储 |
-| **任务依赖管理** | 支持任务间依赖关系（blocked_by），自动处理任务执行顺序 |
+| **LangGraph 显式控制流** | 基于LangGraph的图结构定义执行流程，清晰可控，易于调试 |
+| **双臂并行执行** | 左右臂可同时执行无依赖任务，提高执行效率 |
+| **自动审查机制** 🆕 | **Reviewer Agent** 每次操作完成后自动检查场景状态一致性 |
+| **错误自动恢复** | 审查发现问题自动触发主agent调整，重试直至通过检查 |
+| **技能化任务设计** | 预定义原子技能，以Markdown文件存储，易于扩展 |
+| **任务依赖管理** | 支持 `blocked_by` 依赖关系，自动按序执行 |
 | **任务持久化存储** | 所有任务保存到JSON文件，支持断点续执行 |
 | **真实硬件支持** | 通过 RTDE 协议控制真实 UR5 机械臂 |
 | **仿真模式** | 无需硬件也可运行仿真调试 |
-| **碰撞避免协调** | 多臂协作时通过消息总线进行协调避免碰撞 |
 
 ## 系统架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     User Command                             │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    LeadAgent (主智能体)                      │
-│  ──────────────────────────────────────────────────────────  │
-│  • 任务分解 (Task Decomposition)                             │
-│  • 创建持久化任务 (Task Persistence)                           │
-│  • 生成队友智能体 (Spawn Teammates)                           │
-│  • 按依赖顺序分配任务 (Task Assignment by Dependency)         │
-│  • 协调多臂执行 (Multi-arm Coordination)                     │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-         ┌───────────────────┴───────────────────┐
-         │                                   │
-         ▼                                   ▼
-┌───────────────────────┐       ┌───────────────────────┐
-│   ArmTeammate (left)  │       │  ArmTeammate (right)  │
-│  ────────────────────  │       │  ────────────────────  │
-│  • 加载技能           │       │  • 加载技能           │
-│  • 按步骤执行工具调用 │       │  • 按步骤执行工具调用 │
-│  • 报告任务进度       │       │  • 报告任务进度       │
-│  • 协调避碰           │       │  • 协调避碰           │
-└───────────────────────┘       └───────────────────────┘
-         │                                   │
-         └───────────────────┬───────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MessageBus (消息总线)                     │
-│  负责智能体之间的消息传递、任务状态更新、协调请求               │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   MultiArmManager                           │
-│  ──────────────────────────────────────────────────────────  │
-│  • 机械臂状态管理                                            │
-│  • 物体位置管理                                              │
-│  • RTDE 硬件控制                                            │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    UR5 机械臂 (硬件)                         │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    START[START] --> A[plan: LeadAgent任务规划]
+    A --> B[assign_task: 分配就绪任务给双臂]
+    B --> C[execute_left: 左臂执行]
+    B --> D[execute_right: 右臂执行]
+    C --> E[reviewer: 审查检查]
+    D --> E[reviewer: 审查检查]
+    E -->|检查通过| F[check_completion: 检查是否完成]
+    E -->|检查不通过| G[adjust: LeadAgent调整修复]
+    G --> E
+    F -->|还有任务| B
+    F -->|全部完成| END[END]
 ```
 
-## 模块说明
+### 节点职责
 
-### 1. `multi_arm_manager.py` - 多机械臂管理器
-- **RobotArm**: 单个机械臂封装，支持仿真/真实两种模式
-- **MultiArmManager**: 管理多个机械臂和场景中所有物体
-- 支持通过 RTDE 连接真实 UR5 机械臂
-- 线程安全的状态管理（使用 `threading.Lock`）
+| 节点 | 职责 |
+|------|------|
+| **plan** | LeadAgent进行任务分解，创建所有任务并设置依赖 |
+| **assign_task** | 找出所有就绪任务，分别分配给左右臂（支持并行） |
+| **execute_left** / **execute_right** | 左右臂并行执行分配的任务 |
+| **reviewer** | 🆕 **Reviewer Agent** 检查场景状态一致性 |
+| **adjust** | 如果检查不通过，LeadAgent分析问题并调整修复 |
+| **check_completion** | 检查是否所有任务完成，决定继续还是结束 |
 
-关键状态：
-```python
-class ArmState:
-    arm_id: str           # 机械臂ID
-    status: ArmStatus     # IDLE / MOVING / WORKING / ERROR
-    position: List[float] # TCP位姿 [x,y,z,rx,ry,rz]
-    gripper_closed: bool  # 夹爪状态
-    object_in_hand: str   # 当前持有物体
-    reachable_zones: List[str] # 可达区域
-```
+### Reviewer Agent 检查清单
 
-### 2. `tools.py` - 工具注册与执行
-工具模式设计，LLM可以调用这些工具控制机器人：
+每次操作完成后，Reviewer自动检查：
 
-**场景查询工具**:
-- `get_scene_state` - 获取完整工作单元状态
-- `get_arm_state` - 获取指定机械臂状态
-- `get_object_info` - 获取物体信息
-- `get_available_arms` - 获取空闲机械臂
-
-**运动控制工具**:
-- `move_arm_to_position` - 直线运动到目标位置
-- `move_arm_to_object` - 移动到物体位置（支持approach/grasp/place阶段）
-- `move_arm_relative` - 相对当前位置增量移动
-- `open_gripper` / `close_gripper` - 开合夹爪
-- `pick_object` - 完整拾取操作（接近→下降→抓取→提升）
-- `place_object` - 完整放置操作
-- `toggle_screw` - 螺丝操作（拧松/拧紧）
-- `stop_arm` - 紧急停止
-- `reset_arm` - 重置回原点
-
-**任务管理工具**:
-- `get_task_status` - 获取任务队列状态
-- `get_ready_tasks` - 获取可执行任务
-- `start_task` / `complete_task` - 任务状态控制
-
-### 3. `lead_agent.py` - 主协调智能体
-**核心职责**:
-1. 将用户高级目标分解为原子任务链
-2. 为每个原子操作创建持久化任务，设置依赖关系
-3. 为每个机械臂生成队友智能体
-4. 按依赖顺序分配任务给队友
-5. 通过消息总线接收执行结果更新
-
-**支持的工具**:
-- `create_task` / `update_task` / `list_tasks` - 任务持久化管理
-- `spawn_teammate` / `shutdown_teammate` - 队友生命周期管理
-- `assign_task` - 分配任务给队友
-- `send_message` / `broadcast` / `read_inbox` - 通信
-- `load_skill` - 加载技能详情
-
-### 4. `teammate.py` - 机械臂队友智能体
-每个机械臂对应一个独立的队友智能体，在独立线程中运行：
-- 持续检查收件箱获取新任务
-- 收到任务后加载对应技能，严格按技能步骤执行
-- 通过工具调用完成每个动作
-- 执行完成后报告状态给Lead智能体
-- 支持与其他队友请求协调避免碰撞
-
-### 5. `skill_loader.py` - 技能加载器
-技能以 markdown 文件形式存储在 `skills/` 目录，每个技能包含：
-- Frontmatter 元数据（名称、描述、标签）
-- 详细执行步骤
-- 前置条件、成功标准、错误处理
-
-示例技能结构：
-```markdown
----
-name: pick-screwdriver
-description: 从工具架抓取螺丝刀
-tags: [tool, screwdriver, pick]
----
-
-# 抓取螺丝刀技能
-## 前置条件
-1. 螺丝刀在工具架上
-2. 机械臂空闲
-
-## 执行步骤
-### 步骤1: 检查螺丝刀状态
-使用 get_object_info...
-```
-
-### 6. `task_persistence.py` - 任务持久化
-每个任务保存为独立 JSON 文件到 `.tasks/` 目录：
-- 支持任务依赖关系 (`blocked_by`)
-- 任务状态: pending → ready → running → completed / failed
-- 自动处理依赖，当依赖完成后自动解除阻塞
-
-### 7. `team.py` - 团队通信基础设施
-- **MessageBus**: 消息总线，支持点对点发送和广播
-- **CoordinationProtocol**: 协调协议，处理任务分配、状态报告、协调请求
-- **TeamState**: 团队成员状态管理
-
-### 8. `task_queue.py` - 任务队列
-带优先级的任务队列，支持依赖检查。
+1. ✅ **机械臂状态一致性** - 夹爪闭合必须持有物体，夹爪打开不能持有物体
+2. ✅ **物体持有一致性** - 物体标记的持有者必须与机械臂实际持有匹配，不能同时被多个机械臂持有
+3. ✅ **碰撞风险检查** - 计算双臂TCP距离，如果小于安全阈值告警
+4. ✅ **错误状态检查** - 是否有机械臂处于ERROR状态
+5. ✅ **最大重试限制** - 如果多次调整仍不通过，终止任务
 
 ## 内置技能（Skills）
 
-项目预置了 ORU 更换任务所需的 8 个原子技能：
+项目预置了完整的 ORU 更换任务所需的 **9 个**原子技能：
 
 | 技能名称 | 描述 |
 |---------|------|
@@ -191,34 +75,95 @@ tags: [tool, screwdriver, pick]
 | `place-to-storage` | 将旧ORU放置到储物架 |
 | `pick-new-oru` | 从储物架抓取新ORU |
 | `insert-oru` | 将新ORU插入装配站 |
+| `place-screwdriver` | 🆕 将螺丝刀放回工具架原位（螺丝操作完成后） |
+
+## 项目结构
+
+```
+URrobot-agent/
+├── main.py                    # 命令行主入口（支持架构切换）
+├── app.py                     # Streamlit Web可视化界面
+├── .env                       # 环境变量配置
+├── requirements.txt           # Python依赖
+│
+├── config/
+│   ├── config.json            # 机械臂配置
+│   └── object_positions.json  # 物体位置与属性配置
+│
+├── robot/
+│   ├── multi_arm_manager.py   # 多机械臂硬件管理器（不变）
+│   ├── task_persistence.py   # 任务持久化存储（不变）
+│   ├── skill_loader.py        # 技能文件加载器（不变）
+│   ├── tools.py               # 工具注册与执行（不变）
+│   ├── lead_agent.py          # 原有LeadAgent（保留兼容）
+│   ├── teammate.py            # 原有队友智能体（保留兼容）
+│   ├── team.py               # 原有消息总线（保留兼容）
+│   ├── langgraph_agent.py     # 🆕 LangGraph高层入口
+│   └── graph/                # 🆕 LangGraph新架构
+│       ├── __init__.py
+│       ├── state.py           # 图状态定义
+│       ├── reviewer.py        # 🆕 Reviewer审查检查逻辑
+│       ├── nodes.py           # 所有图节点实现
+│       └── builder.py         # 图构建与编译
+│
+├── skills/                    # 原子技能库（Markdown格式）
+│   ├── pick-screwdriver/
+│   ├── loosen-screw/
+│   ├── tighten-screw/
+│   ├── pick-old-oru/
+│   ├── pull-out-oru/
+│   ├── place-to-storage/
+│   ├── pick-new-oru/
+│   ├── insert-oru/
+│   └── place-screwdriver/    # 🆕 新增螺丝刀放回技能
+│
+└── utils/
+    └── logger_handler.py      # 日志处理
+```
 
 ## 配置说明
 
 ### 环境变量 (`.env`)
+
 ```env
+# API Key (required)
 ANTHROPIC_API_KEY=your-api-key
-ANTHROPIC_BASE_URL=https://api.anthropic.com  # 可自定义base URL
-MODEL_ID=claude-3-sonnet-20240229
-USE_SIMULATOR=true  # false 连接真实硬件
+
+# Model ID
+MODEL_ID=minimax-m2.5
+
+# Base URL (for Anthropic-compatible providers)
+ANTHROPIC_BASE_URL=https://ark.cn-beijing.volces.com/api/coding
+
+# Robot Configuration
+ROBOT_LEFT_HOST=192.168.111.101
+ROBOT_RIGHT_HOST=192.168.111.102
+USE_SIMULATOR=true
+
+# Architecture Selection 🆕
+# - true: LangGraph + Reviewer 双臂并行 + 自动审查（默认）
+# - false: 传统多线程+消息总线架构
+USE_LANGGRAPH=true
 ```
 
 ### 机械臂与物体配置 (`config/object_positions.json`)
+
 ```json
 {
   "robots": {
     "arm_left": {
       "name": "Left UR5",
-      "host": "192.168.1.101",
+      "host": "192.168.111.101",
       "home_position": [0.3, 0.3, 0.4, 0.0, 3.14159, 0.0],
-      "reachable_zones": ["assembly_station", "storage_rack_left", ...]
-    }
+      "reachable_zones": ["assembly_station", "tool_rack", "storage_rack_left"]
+    },
+    "arm_right": { ... }
   },
   "objects": {
-    "assembly_station": {
-      "position": [0.5, 0.0, 0.2, 0.0, 3.14159, 0.0],
-      "approach_offset": [0.0, 0.0, 0.15],
-      "type": "station",
-      "status": "ready"
+    "screwdriver": {
+      "position": [0.3, -0.2, 0.3, ...],
+      "type": "tool",
+      "status": "stored"
     },
     ...
   }
@@ -228,24 +173,31 @@ USE_SIMULATOR=true  # false 连接真实硬件
 ## 安装与运行
 
 ### 安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
 依赖包：
-- `anthropic` - Anthropic Claude API
+- `anthropic` - Anthropic Claude API兼容
 - `python-dotenv` - 环境变量管理
-- `rtde-control` / `rtde-receive` - UR机器人RTDE通信
+- `langgraph` - LangGraph图执行框架 🆕
+- `langchain-core` - LangChain核心
+- `streamlit` - Web可视化界面
+- `rtde-control` / `rtde-receive` - UR机器人RTDE通信（真实硬件需要）
 
 ### 运行
+
 ```bash
 python main.py
 ```
 
+默认使用 **LangGraph + Reviewer** 架构，如果想切回传统架构，修改 `.env` 中 `USE_LANGGRAPH=false`。
+
 ### 交互命令
+
 - `quit` / `exit` - 退出程序
 - `state` / `状态` - 显示当前工作单元状态
-- `team` / `队友` - 显示队友状态
 - `reset` / `重置` - 重置所有机械臂和任务
 - `help` / `帮助` - 显示帮助
 
@@ -256,7 +208,7 @@ python main.py
 > 更换装配站上的ORU
 ```
 
-**Lead智能体规划**:
+**规划结果** (LeadAgent):
 1. 创建任务 #1 `pick-screwdriver` (left_arm)
 2. 创建任务 #2 `loosen-screw` (left_arm, blocked_by: #1)
 3. 创建任务 #3 `pick-old-oru` (left_arm, blocked_by: #2)
@@ -264,203 +216,70 @@ python main.py
 5. 创建任务 #5 `place-to-storage` (left_arm, blocked_by: #4)
 6. 创建任务 #6 `pick-new-oru` (right_arm, 可与#5并行)
 7. 创建任务 #7 `insert-oru` (right_arm, blocked_by: #6)
-8. 创建任务 #8 `tighten-screw` (left_arm, blocked_by: #5, #7)
+8. 创建任务 #8 `tighten-screw` (left_arm, blocked_by: #5 #7)
+9. 创建任务 #9 `place-screwdriver` (left_arm, blocked_by: #8) ← 新增螺丝刀放回
 
-**执行过程**:
-- 生成 `left_arm` 和 `right_arm` 两个队友智能体
-- 分配任务 #1 给 left_arm
-- left_arm 加载 `pick-screwdriver` 技能，按步骤执行
-- 完成后报告完成，Lead更新任务状态
-- 任务 #2 解除阻塞，分配给 left_arm
-- ...依此类推直到所有任务完成
+**执行流程**:
+- `assign_task` 发现 #1 就绪，分配给 `left_arm`，没有其他就绪任务
+- `execute_left` 执行 #1，`execute_right` 无任务跳过
+- **两个分支都完成**后进入 `reviewer` 检查
+- 检查通过 → `check_completion` → `assign_task` 下一回合
+- ...
+- 当进行到 #5 `place-to-storage` (left_arm) 和 #6 `pick-new-oru` (right_arm) → **两个任务都就绪，** **同时并行执行**
+- 两个都完成 → 一起进入 `reviewer` 统一检查
 
 ## 设计亮点
 
-### 1. **Skill-based 架构**
-相比硬编码操作步骤，将技能文档化存储在Markdown中，LLM可以直接读取并按步骤执行，易于扩展和修改。
+### 1. **LangGraph 显式控制流**
+相比原来的多线程+消息总线隐式控制流，LangGraph将执行流程显式定义为图节点和边，调试更容易，流程清晰可见。
 
-### 2. **层级多智能体**
-- Lead智能体专注于高层规划和协调
-- 每个机械臂是独立智能体，负责执行细节
-- 支持并行执行无依赖任务，提高效率
+### 2. **自动审查机制** 🆕
+每次操作（包括双臂并行操作）完成后，自动由独立Reviewer Agent检查整个场景状态一致性，提前发现问题，避免错误累积。
 
-### 3. **任务持久化**
-所有任务保存到文件，系统重启后可以恢复执行进度，适合长时间运行的工业任务。
+### 3. **原生支持并行执行**
+LangGraph原生支持一个节点多个出边并行执行，等待全部完成再继续，天然适配双臂并行执行场景。
 
-### 4. **依赖驱动执行**
-通过 `blocked_by` 声明依赖，自动按顺序执行，清晰管理任务流。
+### 4. **Skill-based 架构**
+相比硬编码操作步骤，将技能文档化存储在Markdown中，LLM可以直接读取并按步骤执行，易于扩展和修改。添加新技能只需新增一个SKILL.md文件，无需修改代码。
 
-### 5. **仿真/真实双模**
-开发调试可用仿真，部署直接切换到真实硬件，代码无需修改。
+### 5. **层级多智能体**
+- LeadAgent专注于高层规划、依赖设置、错误调整
+- 每个机械臂执行节点专注于具体动作执行
+- Reviewer专注于状态检查
+- 职责分离清晰
 
----
+### 6. **任务持久化**
+所有任务保存到文件，系统重启后可以恢复执行进度，适合工业场景。
 
-## 常见面试题及详细解答
+## 新增改动对比原架构
 
-### Q1: 为什么采用多智能体架构而不是单智能体直接控制？
+| 特性 | 原架构 | 新LangGraph架构 |
+|------|--------|----------------|
+| 控制流 | 多线程+消息总线，隐式 | LangGraph显式图，清晰可控 |
+| 并行执行 | 每个队友独立线程，需要显式消息同步 | 原生支持并行，自动等待全部完成 |
+| 自动审查 | ❌ 无 | ✅ Reviewer每次操作后自动检查 |
+| 错误恢复 | 需要Lead主动inbox读取，流程复杂 | ❗ 检查不通过自动路由到adjust节点 |
+| 可调试性 | 多线程难调试 | 单线程线性执行，易于调试 |
+| 螺丝刀归位 | ❌ 缺少 | ✅ 新增 `place-screwdriver` 技能 |
+| 并行规划引导 | 不足，容易全顺序阻塞 | ✅ 提示词改进，引导正确识别可并行任务 |
 
-**A**:
-采用多智能体架构主要有以下几个原因：
+## 常见问题
 
-1. **职责分离**: Lead智能体专注于任务分解、规划和协调，每个机械臂智能体专注于具体动作执行，符合单一职责原则。
+**Q: 什么时候Reviewer会检查不通过？**
 
-2. **并行执行**: 无依赖的任务可以分配给不同机械臂同时执行，提高整体效率。例如在ORU更换中，左机械臂放置旧ORU的同时，右机械臂可以去抓取新ORU。
+A: 常见场景：
+- 机械臂夹爪状态与持有物体不一致（夹爪闭了没抓到东西）
+- 物体持有者信息不匹配
+- 双臂距离太近可能碰撞
+- 某个机械臂进入错误状态
 
-3. **可扩展性**: 增加新的机械臂只需要生成新的队友智能体，架构不需要修改。
+**Q: 检查不通过之后怎么办？**
 
-4. **降低上下文负载**: 如果单智能体控制双臂，需要同时记住两个机械臂的所有状态细节，上下文容易溢出。拆分后每个队友智能体只需要关注自己机械臂的状态。
+A: 自动路由到 `adjust` 节点，由LeadAgent分析问题并执行修复操作（比如重新打开/关闭夹爪，更新物体状态，回滚任务重新执行），调整完成后再次检查，直到通过或达到最大重试次数。
 
-5. **天然适配协作场景**: 多智能体之间通过消息总线协调，可以自然处理碰撞避免、资源竞争等问题。
+**Q: 如何切换回原有架构？**
 
----
-
-### Q2: 为什么要设计技能（Skill）机制？技能文件为什么用Markdown？
-
-**A**:
-
-设计Skill机制的好处：
-
-1. **知识分离**: 将"如何完成一个原子任务"的知识从代码中分离出来，以自然语言文档形式存储，更容易编辑和扩展。
-
-2. **LLM友好**: LLM本身擅长阅读理解Markdown格式的步骤说明，直接就能按步骤执行，不需要额外解析。
-
-3. **易于修改扩展**: 添加新技能只需要新建一个文件夹加SKILL.md文件，不需要修改任何代码。
-
-4. **可追溯可审核**: 技能是明文文档，方便人工审核步骤是否正确。
-
-5. **少样本学习**: 现有的技能可以作为示例，帮助LLM理解预期的执行方式。
-
-为什么用Markdown而不是JSON/YAML结构化存储？
-- Markdown更易读，人类编辑方便
-- LLM天生就能理解Markdown
-- 允许灵活添加说明、错误处理、后续建议等辅助信息
-
----
-
-### Q3: 如何处理多机械臂协作中的碰撞避免？
-
-**A**:
-
-项目中通过以下机制避免碰撞：
-
-1. **可达区域预配置**: 在配置文件中为每个机械臂预先声明可达区域`reachable_zones`，Lead分配任务时会选择能到达目标区域的机械臂。
-
-2. **显式协调请求**: 当一个机械臂需要进入另一个机械臂的工作区域时，它可以通过`request_coordination`工具向对方发送协调请求。
-
-3. **消息总线通信**: 所有协调消息通过MessageBus传递，保证消息不丢失。
-
-4. **任务依赖**: 通过`blocked_by`机制让需要互斥访问工作区的任务顺序执行，从规划层面避免同时访问。
-
----
-
-### Q4: 什么是任务持久化？为什么需要它？
-
-**A**:
-
-任务持久化是指将每个任务以JSON文件形式保存到磁盘：
-
-**为什么需要**:
-
-1. **断点续执行**: 如果系统中途崩溃或重启，可以从上次暂停的地方继续执行，不需要从头开始。这对于工业场景中耗时较长的任务很重要。
-
-2. **进度可追溯**: 所有任务的创建时间、开始时间、完成时间、执行结果都被记录，方便事后复盘和调试。
-
-3. **状态可视化**: 可以随时查看哪些任务完成了，哪些在等待，方便问题定位。
-
-4. **依赖关系持久化**: 依赖关系也保存在文件中，重启后依赖关系依然正确。
-
----
-
-### Q5: 线程安全是如何保证的？
-
-**A**:
-
-项目中多个地方使用了`threading.Lock`来保证线程安全：
-
-1. **机械臂状态更新**: 每个机械臂有独立锁，状态修改（位置、夹爪、持有物体）需要先获取锁，避免并发修改。
-
-2. **MultiArmManager**: 场景状态读写使用锁保护，因为Lead智能体和队友智能体可能同时查询场景。
-
-3. **TaskQueue / TaskPersistence**: 任务增删改查使用锁保护，避免并发读写数据结构导致损坏。
-
-4. **MessageBus**: 消息发送和读取使用锁保护，保证消息不丢失。
-
----
-
-### Q6: 如何支持仿真模式和真实硬件模式切换？
-
-**A**:
-
-在`RobotArm`类中：
-
-```python
-if not use_simulator and host:
-    self._connect_real_robot(host)
-```
-
-- 仿真模式: 不建立RTDE连接，移动只是等待一段时间并更新内存中的位置坐标
-- 真实模式: 导入`rtde_control`和`rtde_receive`，建立网络连接，调用真实机器人API
-
-切换只需要修改环境变量`USE_SIMULATOR=false`，代码逻辑完全一致，开发调试用仿真，部署用真实硬件。
-
----
-
-### Q7: LLM工具调用（Function Calling）是如何工作的？
-
-**A**:
-
-流程：
-
-1. 将所有工具的schema（名称、描述、输入参数）发送给Claude API
-2. Claude根据当前上下文决定是直接回答还是调用工具
-3. 如果调用工具，解析出工具名称和参数
-4. 在本地执行工具，获取结果
-5. 将工具结果返回给Claude，Claude继续思考
-6. 重复直到任务完成，Claude结束turn返回最终回答
-
-这个项目中，工具调用是整个系统的核心——LLM通过调用工具来实际控制机器人。
-
----
-
-### Q8: 如何处理任务依赖关系？
-
-**A**:
-
-每个任务可以声明`blocked_by`，即此任务需要等待哪些任务完成才能执行：
-
-1. 创建任务时，如果`blocked_by`不为空，任务状态设为`blocked`
-2. 当一个任务完成时，遍历所有被它阻塞的任务，从它们的`blocked_by`中移除它
-3. 如果`blocked_by`变为空，任务状态变为`ready`，可以被分配执行
-
-这样就实现了基于依赖的自动任务流调度。
-
----
-
-### Q9: 这个项目可以应用到其他场景吗？
-
-**A**:
-
-当然可以。这是一个通用框架：
-
-- **其他机器人任务**: 只要重新定义技能（添加SKILL.md）和配置物体位置，就可以完成不同的组装、分拣、装配任务。
-
-- **更多机械臂**: 配置文件添加更多机械臂，Lead智能体自动就能协调。
-
-- **其他机器人品牌**: 只要修改`RobotArm`类中的RTDE连接和运动控制部分，上层智能体架构完全不用变。
-
----
-
-### Q10: 系统可能出现什么故障？如何处理？
-
-**A**:
-
-| 故障 | 处理方式 |
-|-----|---------|
-| 机械臂运动失败 | 工具返回失败状态，LLM可以根据错误信息重试或调整位置 |
-| 网络断开 | RTDE会抛出异常，机械臂状态设为ERROR，LLM报告错误给用户 |
-| LLM输出截断 | 检测到`max_tokens`停止原因，返回错误让用户增大max_tokens或简化任务 |
-| 达到最大迭代次数 | 防止无限循环，提前终止，报告错误 |
-| 抓取失败 | 技能文档中定义了错误处理流程，LLM会重新调整位置重试 |
+A: 修改 `.env` 文件中 `USE_LANGGRAPH=false` 即可，原有代码完全保留。
 
 ## 许可证
 

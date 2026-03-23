@@ -1,9 +1,9 @@
 # API Key (required)
 # Get yours at: https://console.anthropic.com/
-ANTHROPIC_API_KEY=cfbdcaf7-c088-4368-a676-484db404bfd5
+ANTHROPIC_API_KEY=cfxxxxx
 
 # Model ID (required)
-MODEL_ID=minimax-m2.5
+MODEL_ID=Doubao-Seed-2.0-pro
 
 # Base URL (optional, for Anthropic-compatible providers)
 ANTHROPIC_BASE_URL=https://ark.cn-beijing.volces.com/api/coding
@@ -60,10 +60,14 @@ ANTHROPIC_BASE_URL=https://ark.cn-beijing.volces.com/api/coding
 # =============================================================================
 #  Robot Configuration
 # =============================================================================
-
 # Robot IPs
 ROBOT_LEFT_HOST=192.168.111.101
 ROBOT_RIGHT_HOST=192.168.111.102
 
 # Use simulator (true/false)
 USE_SIMULATOR=true
+
+# Use LangGraph architecture with Reviewer agent (true/false)
+# - true: LangGraph + Reviewer 双臂并行执行 + 自动审查检查
+# - false: 传统多线程+消息总线架构
+USE_LANGGRAPH=true

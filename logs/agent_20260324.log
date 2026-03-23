@@ -1,0 +1,38 @@
+2026-03-24 00:21:41,009 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: insert-oru
+2026-03-24 00:21:41,010 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: loosen-screw
+2026-03-24 00:21:41,010 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: pick-new-oru
+2026-03-24 00:21:41,010 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: pick-old-oru
+2026-03-24 00:21:41,010 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: pick-screwdriver
+2026-03-24 00:21:41,011 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: place-screwdriver
+2026-03-24 00:21:41,011 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: place-to-storage
+2026-03-24 00:21:41,011 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: pull-out-oru
+2026-03-24 00:21:41,011 - agent - DEBUG - skill_loader.py:92 - [SkillLoader] Loaded skill: tighten-screw
+2026-03-24 00:21:41,011 - agent - INFO - skill_loader.py:39 - [SkillLoader] Loaded 9 skills from c:\Users\zhenglianchi\Desktop\project\URrobot-agent\skills
+2026-03-24 00:21:42,284 - agent - INFO - multi_arm_manager.py:90 - [Arm] Left UR5 initialized (simulator)
+2026-03-24 00:21:42,284 - agent - INFO - multi_arm_manager.py:90 - [Arm] Right UR5 initialized (simulator)
+2026-03-24 00:21:42,284 - agent - INFO - multi_arm_manager.py:278 - [MultiArmManager] Loaded: 2 arms, 6 objects
+2026-03-24 00:21:42,284 - agent - INFO - multi_arm_manager.py:251 - [MultiArmManager] Initialized with 2 arms
+2026-03-24 00:21:42,285 - agent - INFO - task_persistence.py:128 - [TaskPersistence] Initialized at c:\Users\zhenglianchi\Desktop\project\URrobot-agent\.tasks
+2026-03-24 00:21:42,290 - agent - INFO - langgraph_agent.py:78 - [LangGraphMultiArmAgent] Initialized with model: minimax-m2.5
+2026-03-24 00:21:42,291 - agent - INFO - langgraph_agent.py:79 - [LangGraphMultiArmAgent] Reviewer enabled, safety_distance=0.15m
+2026-03-24 00:33:12,865 - agent - INFO - nodes.py:63 - [PlanNode] Starting task planning
+2026-03-24 00:33:24,115 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: get_scene_state({})
+2026-03-24 00:33:55,199 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "抓取螺丝刀", "description": "从工具架抓取螺丝刀，用于后续螺丝操作", "skill_name": "pick-screwdriver", "assigned_arm": "left_arm"})
+2026-03-24 00:33:55,199 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 1: 抓取螺丝刀
+2026-03-24 00:34:02,894 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "拧松螺丝", "description": "使用螺丝刀拧松装配站上的螺丝", "skill_name": "loosen-screw", "assigned_arm": "left_arm", "blocked_by": [1]})
+2026-03-24 00:34:02,895 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 2: 拧松螺丝
+2026-03-24 00:34:15,125 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "抓取新ORU", "description": "从储物架抓取新的ORU，准备安装", "skill_name": "pick-new-oru", "assigned_arm": "right_arm"})
+2026-03-24 00:34:15,126 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 3: 抓取新ORU
+2026-03-24 00:34:23,244 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "拔出旧ORU", "description": "将旧ORU从装配站完全拔出", "skill_name": "pull-out-oru", "assigned_arm": "left_arm", "blocked_by": [2]})
+2026-03-24 00:34:23,244 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 4: 拔出旧ORU
+2026-03-24 00:34:28,794 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "放置旧ORU到储物架", "description": "将旧ORU放置到储物架存放", "skill_name": "place-to-storage", "assigned_arm": "left_arm", "blocked_by": [4]})
+2026-03-24 00:34:28,795 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 5: 放置旧ORU到储物架
+2026-03-24 00:34:38,563 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "插入新ORU", "description": "将新ORU插入到装配站", "skill_name": "insert-oru", "assigned_arm": "right_arm", "blocked_by": [3, 4]})
+2026-03-24 00:34:38,565 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 6: 插入新ORU
+2026-03-24 00:34:43,769 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "拧紧螺丝", "description": "使用螺丝刀拧紧装配站上的螺丝，固定新ORU", "skill_name": "tighten-screw", "assigned_arm": "left_arm", "blocked_by": [6]})
+2026-03-24 00:34:43,770 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 7: 拧紧螺丝
+2026-03-24 00:34:51,474 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: create_task({"name": "归还螺丝刀", "description": "将螺丝刀放回工具架原位", "skill_name": "place-screwdriver", "assigned_arm": "left_arm", "blocked_by": [7]})
+2026-03-24 00:34:51,475 - agent - INFO - task_persistence.py:215 - [TaskPersistence] Created task 8: 归还螺丝刀
+2026-03-24 00:35:03,922 - agent - INFO - nodes.py:96 - [PlanNode] Tool call: spawn_teammate({"name": "left_arm", "arm_id": "arm_left"})
+2026-03-24 00:35:20,461 - agent - INFO - multi_arm_manager.py:406 - [MultiArmManager] All arms disconnected
+2026-03-24 00:35:20,461 - agent - INFO - langgraph_agent.py:197 - [LangGraphMultiArmAgent] Disconnected

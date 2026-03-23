@@ -8,6 +8,11 @@ URRobot-Agent: 基于大语言模型的双臂机器人协作智能系统
 - MessageBus: 消息总线，队友间通信
 - TaskPersistence: 任务持久化存储
 - SkillLoader: 技能加载
+- LangGraph: 新增基于LangGraph的重构版本，包含Reviewer审查agent
+
+架构选择：
+- 通过环境变量 USE_LANGGRAPH=true/false 选择使用哪个架构
+- 默认使用原有架构，设置 USE_LANGGRAPH=true 启用LangGraph版本
 """
 
 import os
@@ -21,7 +26,13 @@ load_dotenv()
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from robot.lead_agent import create_lead_agent
+# 根据环境变量选择架构
+USE_LANGGRAPH = os.environ.get("USE_LANGGRAPH", "false").lower() == "true"
+
+if USE_LANGGRAPH:
+    from robot.langgraph_agent import create_langgraph_agent
+else:
+    from robot.lead_agent import create_lead_agent
 
 
 def clear_line():
@@ -44,6 +55,10 @@ def main():
     """命令行主入口，运行交互式对话"""
     print_separator()
     print("🤖 双臂机器人智能控制系统 - 命令行模式")
+    if USE_LANGGRAPH:
+        print("🏗️  架构: LangGraph (带Reviewer审查agent)")
+    else:
+        print("🏗️  架构: 传统多线程+消息总线")
     print_separator()
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "object_positions.json")
@@ -73,10 +88,16 @@ def main():
         # 普通思考内容，直接输出不换行
         stream_print(content)
 
-    agent = create_lead_agent(
-        config_path=config_path,
-        stream_callback=stream_callback
-    )
+    if USE_LANGGRAPH:
+        agent = create_langgraph_agent(
+            config_path=config_path,
+            stream_callback=stream_callback
+        )
+    else:
+        agent = create_lead_agent(
+            config_path=config_path,
+            stream_callback=stream_callback
+        )
 
     print(f"\n✓ 已初始化智能体")
     print(f"  模型: {agent.model}")
@@ -112,7 +133,11 @@ def main():
 
             if user_input.lower() in ["team", "队友", "list"]:
                 print_separator('-')
-                print(agent.teammate_manager.list_teammates())
+                if USE_LANGGRAPH:
+                    print("LangGraph模式: 不使用独立队友智能体，任务由图节点直接执行")
+                    print(f"机械臂: {list(agent.manager.arms.keys())}")
+                else:
+                    print(agent.teammate_manager.list_teammates())
                 print_separator('-')
                 continue
 
@@ -126,7 +151,8 @@ def main():
                 print("命令说明:")
                 print("  quit / exit / q → 退出程序")
                 print("  state / 状态 → 显示当前工作单元完整状态")
-                print("  team / 队友 → 显示队友状态")
+                if not USE_LANGGRAPH:
+                    print("  team / 队友 → 显示队友状态")
                 print("  reset / 重置 → 重置所有机械臂和任务")
                 print("  help / 帮助 → 显示帮助")
                 print_separator('-')
@@ -134,32 +160,56 @@ def main():
 
             print()
             full_response = ""
-            for chunk in agent.chat_stream(user_input):
-                if "[thinking]" in chunk:
-                    if chunk.startswith("[thinking]"):
-                        clear_line()
-                        stream_print("主智能体 思考中: ")
-                elif "[/thinking]" in chunk:
-                    stream_print("\n")
-                elif "[tool_call]" in chunk:
-                    content = chunk.replace('[tool_call]', '').replace('[/tool_call]', '')
-                    stream_print(f"\n🔧 工具调用: {content}\n")
-                elif "[tool_result]" in chunk:
-                    content = chunk.replace('[tool_result]', '').replace('[/tool_result]', '')
-                    stream_print(f"✅ 结果: {content}\n")
-                elif "[response]" in chunk:
-                    content = chunk.replace('[response]', '').replace('[/response]', '')
-                    full_response = content
-                elif "[error]" in chunk:
-                    error = chunk.replace('[error]', '').replace('[/error]', '')
-                    stream_print(f"\n❌ 错误: {error}\n")
-                else:
-                    # 流式输出思考内容，不换行
-                    stream_print(chunk)
+            if USE_LANGGRAPH:
+                # LangGraph流式输出格式不同
+                for chunk in agent.chat_stream(user_input):
+                    if chunk.startswith("[step]"):
+                        content = chunk.replace('[step]', '').replace('[/step]', '')
+                        stream_print(f"\n⚡ Step {content}\n")
+                    elif chunk.startswith("[review]"):
+                        content = chunk.replace('[review]', '').replace('[/review]', '')
+                        stream_print(f"🔍 Review: {content}\n")
+                    elif chunk.startswith("[completed]"):
+                        content = chunk.replace('[completed]', '').replace('[/completed]', '')
+                        stream_print(f"\n✅ {content}\n")
+                    elif chunk.startswith("[result]"):
+                        content = chunk.replace('[result]', '').replace('[/result]', '')
+                        full_response = content
+                    elif chunk.startswith("[error]"):
+                        error = chunk.replace('[error]', '').replace('[/error]', '')
+                        stream_print(f"\n❌ 错误: {error}\n")
+                    elif chunk.startswith("[starting]"):
+                        pass  # 忽略启动信息
+                    else:
+                        stream_print(chunk)
+            else:
+                # 原有格式
+                for chunk in agent.chat_stream(user_input):
+                    if "[thinking]" in chunk:
+                        if chunk.startswith("[thinking]"):
+                            clear_line()
+                            stream_print("主智能体 思考中: ")
+                    elif "[/thinking]" in chunk:
+                        stream_print("\n")
+                    elif "[tool_call]" in chunk:
+                        content = chunk.replace('[tool_call]', '').replace('[/tool_call]', '')
+                        stream_print(f"\n🔧 工具调用: {content}\n")
+                    elif "[tool_result]" in chunk:
+                        content = chunk.replace('[tool_result]', '').replace('[/tool_result]', '')
+                        stream_print(f"✅ 结果: {content}\n")
+                    elif "[response]" in chunk:
+                        content = chunk.replace('[response]', '').replace('[/response]', '')
+                        full_response = content
+                    elif "[error]" in chunk:
+                        error = chunk.replace('[error]', '').replace('[/error]', '')
+                        stream_print(f"\n❌ 错误: {error}\n")
+                    else:
+                        # 流式输出思考内容，不换行
+                        stream_print(chunk)
 
             if full_response:
                 print_separator('-')
-                print(f"📄 最终响应:\n{full_response}")
+                print(f"📄 最终结果:\n{full_response}")
 
             # 任务完成后显示当前状态
             print_separator('-')
