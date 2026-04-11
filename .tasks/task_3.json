@@ -1,0 +1,15 @@
+{
+  "task_id": "3",
+  "name": "放回螺丝刀（拆卸后）",
+  "description": "拧松螺丝后将螺丝刀放回工具架，腾出夹爪抓取旧ORU",
+  "priority": "normal",
+  "status": "completed",
+  "assigned_arm": "Task executed by LangGraph",
+  "created_at": "2026-03-24 14:54:09",
+  "started_at": "2026-03-24 14:56:52",
+  "completed_at": "2026-03-24 14:57:34",
+  "result": null,
+  "skill_name": "place-screwdriver",
+  "blocked_by": [],
+  "blocks": []
+}

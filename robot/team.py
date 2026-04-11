@@ -18,6 +18,8 @@ class MessageType(Enum):
     SHUTDOWN_RESPONSE = "shutdown_response"  # 关闭响应
     PLAN_SUBMISSION = "plan_submission"    # 计划提交
     PLAN_APPROVAL = "plan_approval"  # 计划批准
+    REVIEW_REQUEST = "review_request"    # 评审请求（给Reviewer）
+    REVIEW_RESULT = "review_result"      # 评审结果（返回给Lead）
 
 
 @dataclass
@@ -281,6 +283,38 @@ class CoordinationProtocol:
     def get_plan_status(self, plan_id: str) -> Optional[Dict]:
         with self._lock:
             return self._plan_requests.get(plan_id)
+
+    def submit_for_review(self, lead: str, reviewer: str, tasks: List[Dict], user_target: str) -> str:
+        """提交任务计划给Reviewer评审"""
+        import uuid
+        review_id = str(uuid.uuid4())[:8]
+
+        with self._lock:
+            self._task_requests[review_id] = {
+                "lead": lead,
+                "reviewer": reviewer,
+                "tasks": tasks,
+                "user_target": user_target,
+                "status": "pending"
+            }
+
+        self.bus.send(
+            lead, reviewer,
+            json.dumps(tasks, ensure_ascii=False),
+            "review_request",
+            {"review_id": review_id, "request_data": {
+                "type": "plan",
+                "tasks": json.dumps(tasks, ensure_ascii=False),
+                "user_target": user_target
+            }}
+        )
+
+        return review_id
+
+    def get_review_result(self, review_id: str) -> Optional[Dict]:
+        """获取评审结果"""
+        with self._lock:
+            return self._task_requests.get(review_id)
 
 
 class TeamState:

@@ -161,7 +161,6 @@ def main():
             print()
             full_response = ""
             if USE_LANGGRAPH:
-                # LangGraph流式输出格式不同
                 for chunk in agent.chat_stream(user_input):
                     if chunk.startswith("[step]"):
                         content = chunk.replace('[step]', '').replace('[/step]', '')
@@ -169,17 +168,25 @@ def main():
                     elif chunk.startswith("[review]"):
                         content = chunk.replace('[review]', '').replace('[/review]', '')
                         stream_print(f"🔍 Review: {content}\n")
+                    elif chunk.startswith("[response]"):
+                        content = chunk.replace('[response]', '').replace('[/response]', '')
+                        stream_print(f"\n🤖 回复: {content}\n")
+                        full_response = content
+                    elif chunk.startswith("[info]"):
+                        content = chunk.replace('[info]', '').replace('[/info]', '')
+                        stream_print(f"📋 {content}\n")
                     elif chunk.startswith("[completed]"):
                         content = chunk.replace('[completed]', '').replace('[/completed]', '')
                         stream_print(f"\n✅ {content}\n")
                     elif chunk.startswith("[result]"):
                         content = chunk.replace('[result]', '').replace('[/result]', '')
-                        full_response = content
+                        if not full_response:
+                            full_response = content
                     elif chunk.startswith("[error]"):
                         error = chunk.replace('[error]', '').replace('[/error]', '')
                         stream_print(f"\n❌ 错误: {error}\n")
                     elif chunk.startswith("[starting]"):
-                        pass  # 忽略启动信息
+                        pass
                     else:
                         stream_print(chunk)
             else:

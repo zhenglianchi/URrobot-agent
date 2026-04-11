@@ -2,13 +2,13 @@
   "robots": {
     "arm_left": {
       "name": "Left UR5",
-      "host": "192.168.1.101",
+      "host": "192.168.111.101",
       "home_position": [0.3, 0.3, 0.4, 0.0, 3.14159, 0.0],
       "reachable_zones": ["assembly_station", "storage_rack_left", "tool_rack"]
     },
     "arm_right": {
       "name": "Right UR5",
-      "host": "192.168.1.102",
+      "host": "192.168.111.102",
       "home_position": [0.3, -0.3, 0.4, 0.0, 3.14159, 0.0],
       "reachable_zones": ["assembly_station", "storage_rack_right", "tool_rack"]
     }

@@ -499,10 +499,11 @@ def _open_gripper(manager, arm_id: str) -> ToolResult:
     arm = manager.get_arm(arm_id)
     if not arm:
         return ToolResult(status=ToolStatus.FAILED, message=f"Arm not found: {arm_id}", error="ARM_NOT_FOUND")
+    
+    held_object = arm.state.object_in_hand
     arm.open_gripper()
-    if arm.state.object_in_hand:
-        manager.update_object_state(arm.state.object_in_hand, held_by=None)
-        arm.set_object_in_hand(None)
+    if held_object:
+        manager.update_object_state(held_object, clear_held_by=True)
     return ToolResult(status=ToolStatus.SUCCESS, message=f"Arm {arm_id} gripper opened")
 
 def _close_gripper(manager, arm_id: str, object_id: Optional[str]) -> ToolResult:
@@ -551,6 +552,8 @@ def _place_object(manager, arm_id: str, target_id: str) -> ToolResult:
     if not arm.state.object_in_hand:
         return ToolResult(status=ToolStatus.FAILED, message=f"Arm {arm_id} not holding anything", error="NO_OBJECT")
     
+    held_object = arm.state.object_in_hand
+    
     target_info = manager.get_object_info(target_id)
     if not target_info:
         return ToolResult(status=ToolStatus.FAILED, message=f"Target not found: {target_id}", error="TARGET_NOT_FOUND")
@@ -564,10 +567,8 @@ def _place_object(manager, arm_id: str, target_id: str) -> ToolResult:
     
     arm.moveL(approach)
     arm.moveL(pos)
-    held_object = arm.state.object_in_hand
+    manager.update_object_state(held_object, clear_held_by=True, status=f"placed_at_{target_id}")
     arm.open_gripper()
-    arm.set_object_in_hand(None)
-    manager.update_object_state(held_object, held_by=None, status=f"placed_at_{target_id}")
     arm.moveL(approach)
     
     return ToolResult(status=ToolStatus.SUCCESS, message=f"Arm {arm_id} placed {held_object} at {target_id}")

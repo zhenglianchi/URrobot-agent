@@ -1,0 +1,124 @@
+{
+  "arms": {
+    "arm_left": {
+      "arm_id": "arm_left",
+      "name": "Left UR5",
+      "host": "192.168.1.101",
+      "status": "idle",
+      "position": [
+        0.6,
+        -0.35,
+        0.15,
+        0.0,
+        3.14159,
+        0.0
+      ],
+      "gripper_closed": false,
+      "object_in_hand": null,
+      "current_task": null,
+      "reachable_zones": [
+        "assembly_station",
+        "storage_rack_left",
+        "storage_rack_right"
+      ],
+      "use_simulator": true
+    },
+    "arm_right": {
+      "arm_id": "arm_right",
+      "name": "Right UR5",
+      "host": "192.168.1.102",
+      "status": "idle",
+      "position": [
+        0.3,
+        -0.3,
+        0.4,
+        0.0,
+        3.14159,
+        0.0
+      ],
+      "gripper_closed": false,
+      "object_in_hand": null,
+      "current_task": null,
+      "reachable_zones": [
+        "assembly_station",
+        "storage_rack_left",
+        "storage_rack_right"
+      ],
+      "use_simulator": true
+    }
+  },
+  "objects": {
+    "assembly_station": {
+      "status": "ready",
+      "held_by": null,
+      "position": [
+        0.5,
+        0.0,
+        0.2,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    },
+    "oru_old": {
+      "status": "held",
+      "held_by": null,
+      "position": [
+        0.5,
+        0.0,
+        0.25,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    },
+    "oru_new": {
+      "status": "held",
+      "held_by": null,
+      "position": [
+        0.6,
+        0.25,
+        0.15,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    },
+    "storage_rack_left": {
+      "status": "available",
+      "held_by": null,
+      "position": [
+        0.6,
+        0.25,
+        0.1,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    },
+    "storage_rack_right": {
+      "status": "available",
+      "held_by": null,
+      "position": [
+        0.6,
+        -0.25,
+        0.1,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    },
+    "screwdriver": {
+      "status": "held",
+      "held_by": null,
+      "position": [
+        0.6,
+        -0.35,
+        0.15,
+        0.0,
+        3.14159,
+        0.0
+      ]
+    }
+  }
+}

@@ -25,6 +25,66 @@ from robot.tools import ToolResult, ToolStatus
 from utils.logger_handler import logger
 
 
+def convert_content_blocks_to_compatible(content: Any) -> Any:
+    """将模型返回的 content blocks 转换为 LangChain 兼容格式。
+
+    豆包等模型可能返回 ThinkingBlock/TextBlock 格式，LangChain 不支持。
+    此函数将其转换为字符串或字典格式。
+    """
+    if content is None:
+        return ""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        converted = []
+        for block in content:
+            if hasattr(block, 'type'):
+                block_type = block.type
+                if block_type == 'thinking':
+                    converted.append({
+                        "type": "thinking",
+                        "thinking": getattr(block, 'thinking', ''),
+                    })
+                elif block_type == 'text':
+                    converted.append({
+                        "type": "text",
+                        "text": getattr(block, 'text', ''),
+                    })
+                elif block_type == 'tool_use':
+                    converted.append({
+                        "type": "tool_use",
+                        "id": getattr(block, 'id', ''),
+                        "name": getattr(block, 'name', ''),
+                        "input": getattr(block, 'input', {}),
+                    })
+                else:
+                    if hasattr(block, 'model_dump'):
+                        converted.append(block.model_dump())
+                    elif hasattr(block, '__dict__'):
+                        converted.append(block.__dict__)
+                    else:
+                        converted.append(str(block))
+            elif isinstance(block, dict):
+                converted.append(block)
+            elif isinstance(block, str):
+                converted.append({"type": "text", "text": block})
+            else:
+                converted.append(str(block))
+
+        if len(converted) == 1 and converted[0].get("type") == "text":
+            return converted[0].get("text", "")
+        return converted
+
+    if hasattr(content, 'model_dump'):
+        return content.model_dump()
+    if hasattr(content, '__dict__'):
+        return content.__dict__
+
+    return str(content)
+
+
 class PlanNode:
     """Plan 节点：LeadAgent进行任务规划。"""
 
@@ -68,7 +128,6 @@ class PlanNode:
         tools = LeadToolRegistry.get_all_tools()
         iteration = 0
 
-        # 使用LeadAgent的工具调用循环进行规划
         while iteration < 10:
             if not self.client:
                 break
@@ -83,10 +142,20 @@ class PlanNode:
 
             stop_reason = response.stop_reason
             assistant_content = response.content
-            messages.append({"role": "assistant", "content": assistant_content})
+            converted_content = convert_content_blocks_to_compatible(assistant_content)
+            messages.append({"role": "assistant", "content": converted_content})
+
+            logger.info(f"[PlanNode] Model response - stop_reason: {stop_reason}")
+
+            for block in assistant_content:
+                if hasattr(block, 'type'):
+                    if block.type == 'thinking':
+                        logger.info(f"[PlanNode] Thinking: {getattr(block, 'thinking', '')[:200]}...")
+                    elif block.type == 'text':
+                        text_content = getattr(block, 'text', '')
+                        logger.info(f"[PlanNode] Text: {text_content}")
 
             if stop_reason == "end_turn":
-                # 规划完成
                 break
 
             if stop_reason == "tool_use":
@@ -187,7 +256,7 @@ class AssignTaskNode:
         logger.info("[AssignTaskNode] Finding ready tasks for parallel execution")
 
         # 获取所有就绪任务（依赖都已完成）
-        ready_tasks = self.task_persistence.get_ready_tasks()
+        ready_tasks = self.task_persistence.list_ready()
 
         if not ready_tasks:
             logger.info("[AssignTaskNode] No ready tasks available")
@@ -350,7 +419,6 @@ class ExecuteNode:
             logger.info(f"[ExecuteNode][{self.arm_id}] No pending task, skipping")
             return {
                 f"pending_{self.arm_id.split('_')[0]}_task": None,
-                "iteration_count": state.get("iteration_count", 0) + 1,
             }
 
         task = self.task_persistence.get(current_task_id)
@@ -359,7 +427,6 @@ class ExecuteNode:
             self.task_persistence.update(current_task_id, "failed", "Task not found")
             return {
                 f"pending_{self.arm_id.split('_')[0]}_task": None,
-                "iteration_count": state.get("iteration_count", 0) + 1,
             }
 
         logger.info(f"[ExecuteNode][{self.arm_id}] Executing task: {current_task_id} - {task.name}")
@@ -390,10 +457,10 @@ class ExecuteNode:
 
             stop_reason = response.stop_reason
             assistant_content = response.content
-            messages.append({"role": "assistant", "content": assistant_content})
+            converted_content = convert_content_blocks_to_compatible(assistant_content)
+            messages.append({"role": "assistant", "content": converted_content})
 
             if stop_reason == "end_turn":
-                # 任务完成
                 break
 
             if stop_reason == "tool_use":
@@ -422,7 +489,6 @@ class ExecuteNode:
         return {
             "scene_state": scene_state,
             arm_key: None,
-            "iteration_count": state.get("iteration_count", 0) + 1,
         }
 
     def _execute_tool(self, name: str, params: Dict) -> ToolResult:
@@ -554,7 +620,6 @@ class AdjustNode:
                 "iteration_count": state.get("iteration_count", 0) + 1,
             }
 
-        # 构建消息
         prompt = f"""Reviewer检查发现以下场景状态问题：
 
 {chr(10).join(f'- {issue}' for issue in issues)}
@@ -566,13 +631,10 @@ class AdjustNode:
 
 请分析问题并进行必要的调整。"""
 
-        messages = state["messages"].copy()
-        messages.append({"role": "user", "content": prompt})
+        messages = [{"role": "user", "content": prompt}]
 
         tools = self._get_tools()
         iteration = 0
-
-        # 调整循环
         while iteration < 5:
             if not self.client:
                 break
@@ -587,7 +649,8 @@ class AdjustNode:
 
             stop_reason = response.stop_reason
             assistant_content = response.content
-            messages.append({"role": "assistant", "content": assistant_content})
+            converted_content = convert_content_blocks_to_compatible(assistant_content)
+            messages.append({"role": "assistant", "content": converted_content})
 
             if stop_reason == "end_turn":
                 break

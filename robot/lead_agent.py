@@ -17,6 +17,7 @@ from robot.teammate import TeammateManager, ArmTeammate
 from robot.tools import ToolResult, ToolStatus
 from robot.skill_loader import get_skill_loader, SkillLoader
 from robot.task_persistence import TaskPersistence, Task
+from robot.reviewer import ReviewerAgent
 
 
 class LeadToolRegistry:
@@ -155,6 +156,26 @@ class LeadToolRegistry:
                     "properties": {"name": {"type": "string", "description": "技能名称，如 pick-old-oru, tighten-screw 等"}},
                     "required": ["name"]
                 }
+            },
+            "submit_for_review": {
+                "description": "将完整任务计划提交给Reviewer审查智能体进行Reflection评审，检查依赖和物理约束。所有任务创建完成后执行前必须调用此工具。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_target": {"type": "string", "description": "用户的原始目标描述"}
+                    },
+                    "required": ["user_target"]
+                }
+            },
+            "get_review_result": {
+                "description": "读取Reviewer的评审结果，获取是否通过以及修改建议。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "review_id": {"type": "string", "description": "评审ID"}
+                    },
+                    "required": ["review_id"]
+                }
             }
         }
         cls._initialized = True
@@ -208,17 +229,44 @@ def build_system_prompt(skill_loader: SkillLoader) -> str:
 3. **依赖管理**：设置任务间的 `blocked_by` 和 `blocks` 双向依赖关系
 4. **协调执行**：按依赖顺序分配任务给机械臂，等待完成后再分配下一个
 
-## 固定团队
+## ⚠️ 重要：判断用户意图
+在处理用户输入前，先判断用户意图：
+
+### 情况1：一般对话/询问
+如果用户是在询问系统能力、功能介绍、使用方法等，**直接用自然语言回答**，不要创建任务。
+例如：
+- "你有什么功能？" → 直接介绍系统能力
+- "你能做什么？" → 直接介绍
+- "怎么使用？" → 直接说明使用方法
+- "你好" → 直接问候回复
+
+### 情况2：执行任务请求
+如果用户明确要求执行某个具体操作，才进行任务规划和创建。
+例如：
+- "帮我更换ORU" → 创建任务链
+- "把螺丝刀拿起来" → 创建任务
+- "移动左臂到位置A" → 创建任务
+
+## 系统能力介绍
+当用户询问功能时，你可以介绍：
+
+### 双臂协作能力
 - **left_arm**: 左侧UR5机械臂 (arm_id: arm_left)
 - **right_arm**: 右侧UR5机械臂 (arm_id: arm_right)
 
-## 可用技能
+### 可用技能
 {skills_desc}
 
-使用 `load_skill` 工具可获取技能的详细执行步骤。
+### 典型应用场景
+- ORU（轨道可更换单元）更换操作
+- 螺丝拧紧/拧松操作
+- 物体抓取和放置
+- 双臂协作任务
 
 ## 可用工具
 {tools_desc}
+
+使用 `load_skill` 工具可获取技能的详细执行步骤。
 
 ## ⚠️ 关键状态约束（必须遵守）
 
@@ -239,21 +287,56 @@ def build_system_prompt(skill_loader: SkillLoader) -> str:
 - **位置冲突**：两个机械臂不能同时操作同一位置的物体
 - **工具归位**：所有螺丝操作完成后，**必须**执行 `place-screwdriver` 将螺丝刀放回工具架原位
 
-### 并行规划原则
-- **正确识别依赖关系**：
-  - ✅ **只对有依赖关系的任务设置阻塞**：只有真的必须等待前置任务完成才能开始的任务才需要 `blocked_by`
-  - ✅ **无依赖的任务可以并行**：如果两个任务分配给不同机械臂，且互不依赖，可以同时执行，不要设置阻塞
-  - ❌ **不要所有任务都依次阻塞**：不要让每个任务都只等待前一个任务完成，浪费并行机会
-- 示例：左臂抓取螺丝刀拧松螺丝的时候，右臂可以同时抓取新ORU准备安装，这两个任务不冲突，可以并行
+### 🎯 并行规划核心原则（重要！）
 
-**完整ORU更换任务的标准步骤应该是：**
-1. pick-screwdriver (左臂)
-2. loosen-screw (左臂) → 这一步完成后才能拔旧ORU
-3. 拔出旧ORU后，右臂可以并行 pick-new-oru
-4. 旧ORU放置完成，新ORU插入到位
-5. tighten-screw (左臂)
-6. **place-screwdriver (左臂)** ← 必须有这一步，螺丝刀放回原位
-7. 完成
+**双臂可以同时执行不同任务！** 正确识别哪些任务可以并行：
+
+#### 并行执行的条件
+两个任务可以**同时执行**（不设置阻塞）当且仅当：
+1. 分配给**不同机械臂**（左臂 vs 右臂）
+2. 操作**不同物体**或**不同位置**
+3. 没有物理上的依赖关系
+
+#### ORU更换任务的正确并行规划
+
+```
+时间线 →
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+左臂: [1.取螺丝刀] → [2.拧松螺丝] → [3.放螺丝刀] → [4.抓旧ORU] → [5.拔出旧ORU] → [6.放旧ORU] → [9.取螺丝刀] → [10.拧紧螺丝] → [11.放螺丝刀]
+                                              ↓                                        ↓
+右臂:                             [7.抓新ORU] ────────────────────────────────→ [8.插入新ORU]
+                                              ↑                                        ↑
+                                        (无依赖，可并行)                    (需等左臂放旧ORU + 右臂抓新ORU)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+#### ⚠️ 重要：螺丝刀必须放回才能抓ORU！
+
+**夹爪一次只能持有一个物体！** 拧松螺丝后，必须先放回螺丝刀，才能抓取旧ORU。
+
+#### 任务依赖关系表
+
+| 任务ID | 任务名称 | 机械臂 | blocked_by | 说明 |
+|--------|---------|--------|------------|------|
+| 1 | pick-screwdriver | 左臂 | 无 | 起始任务 |
+| 2 | loosen-screw | 左臂 | [1] | 需要先拿螺丝刀 |
+| 3 | place-screwdriver | 左臂 | [2] | ⚡ 拧松后立即放回，腾出夹爪 |
+| 4 | pick-old-oru | 左臂 | [3] | 需要先放螺丝刀，腾出夹爪 |
+| 5 | pull-out-oru | 左臂 | [4] | 需要先抓住旧ORU |
+| 6 | place-old-oru | 左臂 | [5] | 需要先拔出旧ORU |
+| 7 | pick-new-oru | 右臂 | **无** | ⚡ 可与左臂任务4-6并行！ |
+| 8 | insert-oru | 右臂 | [6, 7] | 需要旧ORU移走 + 新ORU在手 |
+| 9 | pick-screwdriver | 左臂 | [6] | 需要先放旧ORU，腾出夹爪 |
+| 10 | tighten-screw | 左臂 | [8, 9] | 需要新ORU插入 + 螺丝刀在手 |
+| 11 | place-screwdriver | 左臂 | [10] | 最后放回螺丝刀 |
+
+#### ⚠️ 常见错误
+- ❌ 错误：拧松螺丝后直接抓旧ORU（夹爪还持有螺丝刀，无法抓取）
+- ❌ 错误：让任务7依赖任务6（认为必须等旧ORU放好才能抓新ORU）
+- ✅ 正确：拧松螺丝后先放螺丝刀，再抓旧ORU
+- ✅ 正确：新ORU在另一个位置，可以提前抓取，只在插入时等待
 
 ### 任务阻塞规则
 - `blocked_by`: 当前任务依赖的前置任务列表（必须等这些任务完成）
@@ -265,8 +348,8 @@ def build_system_prompt(skill_loader: SkillLoader) -> str:
 ### Step 1: 分析目标 → 规划任务链
 根据用户目标，分析需要哪些技能，确定执行顺序和依赖关系：
 - 识别前置依赖：哪些操作必须在其他操作之前完成？
-- 识别并行机会：哪些操作可以同时由不同机械臂执行？
-- 设置阻塞关系：使用 `blocked_by` 标记依赖
+- **识别并行机会**：哪些操作可以同时由不同机械臂执行？（关键！）
+- 设置阻塞关系：只对真正有依赖的任务设置 `blocked_by`
 
 ### Step 2: 创建任务
 ```python
@@ -274,17 +357,29 @@ create_task(
     name="任务名称",
     skill_name="技能名称",
     assigned_arm="left_arm",  # 或 "right_arm"
-    blocked_by=[1, 2]  # 依赖的任务ID列表
+    blocked_by=[1, 2]  # 只填写真正依赖的任务ID
 )
 ```
 
-### Step 3: 生成队友
+### Step 3: 评审计划（Reflection机制，必须执行）
+所有任务创建完成后，提交给Reviewer审查：
+```python
+submit_for_review(user_target="用户原始目标描述")
+```
+然后读取评审结果：
+```python
+get_review_result(review_id="xxx")
+```
+- 如果评审通过，继续下一步
+- 如果评审不通过，根据建议修改任务，然后重新提交评审
+
+### Step 4: 生成队友
 ```python
 spawn_teammate(name="left_arm", arm_id="arm_left")
 spawn_teammate(name="right_arm", arm_id="arm_right")
 ```
 
-### Step 4: 执行任务
+### Step 5: 执行任务
 ```python
 assign_task(teammate="left_arm", task={{"skill": "技能名", "action": "动作描述", "task_id": "1"}})
 read_inbox  # 等待结果，会收到 task_status 类型的消息
@@ -386,6 +481,19 @@ class LeadAgent:
             base_url=self.base_url,
             stream_callback=self.stream_callback,
             skill_loader=self.skill_loader,
+        )
+
+        # 初始化Reviewer审查智能体（Reflection机制）
+        self.reviewer = ReviewerAgent(
+            bus=self.bus,
+            protocol=self.protocol,
+            team_state=self.team_state,
+            task_persistence=self.task_persistence,
+            skill_loader=self.skill_loader,
+            model=self.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            stream_callback=self.stream_callback,
         )
 
         self.messages: List[Dict] = []           # 对话消息历史
@@ -604,6 +712,10 @@ class LeadAgent:
             return self._tool_get_task(params)
         elif name == "load_skill":
             return self._tool_load_skill(params)
+        elif name == "submit_for_review":
+            return self._tool_submit_for_review(params)
+        elif name == "get_review_result":
+            return self._tool_get_review_result(params)
         else:
             return ToolResult(ToolStatus.ERROR, f"Unknown tool: {name}")
 
@@ -760,12 +872,77 @@ class LeadAgent:
         skill_name = params.get("name", "")
         if not skill_name:
             return ToolResult(ToolStatus.ERROR, "Skill name required")
-        
+
         skill_content = self.skill_loader.get_skill_content(skill_name)
         if skill_content.startswith("Error:"):
             return ToolResult(ToolStatus.ERROR, skill_content)
-        
+
         return ToolResult(ToolStatus.SUCCESS, f"Skill '{skill_name}' loaded", {"content": skill_content})
+
+    def _tool_submit_for_review(self, params: Dict) -> ToolResult:
+        """工具：提交任务计划给Reviewer评审"""
+        user_target = params.get("user_target", "")
+        if not user_target:
+            return ToolResult(ToolStatus.ERROR, "user_target is required")
+
+        # 获取所有已创建的任务
+        tasks = self.task_persistence.list_all()
+        tasks_data = [t.to_dict() for t in tasks]
+
+        # 提交评审
+        review_id = self.protocol.submit_for_review(
+            lead="lead",
+            reviewer="reviewer",
+            tasks=tasks_data,
+            user_target=user_target
+        )
+
+        return ToolResult(ToolStatus.SUCCESS, f"Task plan submitted for review, review_id={review_id}", {
+            "review_id": review_id,
+            "task_count": len(tasks_data)
+        })
+
+    def _tool_get_review_result(self, params: Dict) -> ToolResult:
+        """工具：获取Reviewer评审结果"""
+        review_id = params.get("review_id", "")
+        if not review_id:
+            return ToolResult(ToolStatus.ERROR, "review_id is required")
+
+        review_info = self.protocol.get_review_result(review_id)
+        if not review_info:
+            return ToolResult(ToolStatus.ERROR, f"Review {review_id} not found")
+
+        # 检查是否有结果
+        inbox = self.bus.read_inbox("lead")
+        review_result = None
+        for msg in inbox:
+            if msg.msg_type == "review_result" and msg.extra.get("result"):
+                review_result = msg.extra["result"]
+                break
+
+        if not review_result:
+            return ToolResult(ToolStatus.SUCCESS, "Review still pending", {"status": "pending"})
+
+        # 评审结果已经收到
+        approved = review_result.get("approved", False)
+        errors = review_result.get("errors", [])
+        suggestions = review_result.get("suggestions", [])
+        comment = review_result.get("comment", "")
+
+        if approved:
+            return ToolResult(ToolStatus.SUCCESS, f"Review approved: {comment}", {
+                "approved": True,
+                "errors": errors,
+                "suggestions": suggestions,
+                "comment": comment
+            })
+        else:
+            return ToolResult(ToolStatus.SUCCESS, f"Review rejected: {comment}", {
+                "approved": False,
+                "errors": errors,
+                "suggestions": suggestions,
+                "comment": comment
+            })
     
     def _get_tools(self) -> List[Dict]:
         return LeadToolRegistry.get_all_tools()

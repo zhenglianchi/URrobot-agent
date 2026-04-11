@@ -329,7 +329,8 @@ class MultiArmManager:
         return None
 
     def update_object_state(self, object_id: str, status: str = None,
-                           held_by: str = None, position: List[float] = None):
+                           held_by: str = None, position: List[float] = None,
+                           clear_held_by: bool = False):
         """更新物体状态
 
         参数:
@@ -337,15 +338,35 @@ class MultiArmManager:
             status: 新状态
             held_by: 持有该物体的机械臂ID
             position: 新位置
+            clear_held_by: 是否清除 held_by 字段（用于处理 held_by=None 的情况）
         """
         with self._lock:
             if object_id in self.object_states:
+                old_held_by = self.object_states[object_id].get("held_by")
                 if status is not None:
                     self.object_states[object_id]["status"] = status
                 if held_by is not None:
                     self.object_states[object_id]["held_by"] = held_by
+                    logger.info(f"[MultiArmManager] Object '{object_id}' held_by changed: {old_held_by} -> {held_by}")
+                elif clear_held_by:
+                    self.object_states[object_id]["held_by"] = None
+                    logger.info(f"[MultiArmManager] Object '{object_id}' held_by cleared: {old_held_by} -> None")
                 if position is not None:
                     self.object_states[object_id]["position"] = position
+                self._dump_state_to_file()
+
+    def _dump_state_to_file(self):
+        """将当前状态写入调试文件"""
+        try:
+            debug_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".tasks", "debug_state.json")
+            state = {
+                "arms": {arm_id: arm.state.to_dict() for arm_id, arm in self.arms.items()},
+                "objects": self.object_states,
+            }
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"[MultiArmManager] Failed to dump state: {e}")
 
     def get_object_state(self, object_id: str) -> Optional[Dict]:
         """获取物体当前状态"""

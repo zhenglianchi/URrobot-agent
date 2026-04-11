@@ -135,18 +135,32 @@ class LangGraphMultiArmAgent:
             step += 1
             for node_name, updates in chunk.items():
                 yield f"[step][{step}] Node: {node_name}[/step]\n"
-                if "review_result" in updates:
-                    result = updates["review_result"]
-                    passed = result.get("passed", False)
-                    issues = result.get("issues", [])
-                    if passed:
-                        yield f"[review] ✓ Check passed[/review]\n"
-                    else:
-                        yield f"[review] ✗ Check failed, issues: {len(issues)}[/review]\n"
-                        for issue in issues:
-                            yield f"[review]   - {issue}[/review]\n"
+                if updates:
+                    if "review_result" in updates:
+                        result = updates["review_result"]
+                        passed = result.get("passed", False)
+                        issues = result.get("issues", [])
+                        if passed:
+                            yield f"[review] ✓ Check passed[/review]\n"
+                        else:
+                            yield f"[review] ✗ Check failed, issues: {len(issues)}[/review]\n"
+                            for issue in issues:
+                                yield f"[review]   - {issue}[/review]\n"
+                    if "task_ids" in updates:
+                        yield f"[info] Created tasks: {updates['task_ids']}[/info]\n"
+                    if "scene_state" in updates:
+                        yield f"[info] Scene updated[/info]\n"
+                    if "messages" in updates:
+                        for msg in updates["messages"]:
+                            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                                content = msg.get("content")
+                                if isinstance(content, str):
+                                    yield f"[response]{content}[/response]\n"
+                                elif isinstance(content, list):
+                                    for block in content:
+                                        if isinstance(block, dict) and block.get("type") == "text":
+                                            yield f"[response]{block.get('text', '')}[/response]\n"
 
-        # 最终结果
         yield f"[completed] Execution finished[/completed]\n"
         final_config = {"configurable": {"thread_id": thread_id}}
         final_state = self.graph.get_state(final_config)

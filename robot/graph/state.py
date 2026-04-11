@@ -3,8 +3,24 @@
 定义了多臂协作的图状态结构，继承MessagesState并添加任务和场景相关字段。
 """
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Annotated
 from langgraph.graph import MessagesState
+
+
+def merge_dicts(left: Dict, right: Dict) -> Dict:
+    """合并两个字典，用于并行节点更新 scene_state。"""
+    if left is None:
+        return right or {}
+    if right is None:
+        return left
+    result = left.copy()
+    result.update(right)
+    return result
+
+
+def take_max(left: int, right: int) -> int:
+    """取最大值，用于并行节点更新 iteration_count。"""
+    return max(left or 0, right or 0)
 
 
 @dataclass
@@ -24,8 +40,8 @@ class MultiArmState(MessagesState):
     current_task_id: Optional[str] = None
     current_arm_id: Optional[str] = None  # 当前执行任务的机械臂
 
-    # 场景状态快照（从MultiArmManager同步）
-    scene_state: Dict = field(default_factory=dict)
+    # 场景状态快照（从MultiArmManager同步）- 使用 Annotated 支持并行更新
+    scene_state: Annotated[Dict, merge_dicts] = field(default_factory=dict)
 
     # Reviewer检查结果
     review_result: Optional[Dict] = None
@@ -38,8 +54,8 @@ class MultiArmState(MessagesState):
     adjustment_feedback: str = ""
     adjustment_count: int = 0
 
-    # 执行统计
-    iteration_count: int = 0
+    # 执行统计 - 使用 Annotated 支持并行更新
+    iteration_count: Annotated[int, take_max] = 0
     max_iterations: int = 100
 
     # 任务完成状态
